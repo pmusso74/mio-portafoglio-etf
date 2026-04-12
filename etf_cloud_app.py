@@ -7,11 +7,11 @@ import plotly.graph_objects as go
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="ETF Portfolio Manager", layout="wide", page_icon="📊")
 
-# CSS personalizzato per migliorare l'estetica
+# CSS per migliorare la leggibilità delle tabelle
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .stNumberInput div div input { font-weight: bold; }
+    .price-tag { color: #1E88E5; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -27,10 +27,15 @@ total_monthly_investment = st.sidebar.number_input(
     "Investimento Mensile Totale (€)", min_value=0.0, value=1000.0, step=50.0
 )
 
+# Calcolo settimanale medio (4.33 settimane in un mese)
+total_weekly_investment = total_monthly_investment / 4.33
+
+st.sidebar.info(f"Equivale a circa: **{total_weekly_investment:,.2f} € / settimana**")
+
 st.sidebar.markdown("---")
 st.sidebar.subheader("➕ Aggiungi Asset")
-new_ticker = st.sidebar.text_input("Inserisci Ticker Yahoo (es: SWDA.MI, CSSX5E.MI, CSPX.L)")
-new_weight = st.sidebar.slider("Allocazione desiderata (%)", 0, 100, 10)
+new_ticker = st.sidebar.text_input("Ticker Yahoo (es: SWDA.MI, CSSX5E.MI)")
+new_weight = st.sidebar.slider("Allocazione iniziale (%)", 0, 100, 10)
 
 if st.sidebar.button("Aggiungi al Portafoglio"):
     if new_ticker:
@@ -38,156 +43,125 @@ if st.sidebar.button("Aggiungi al Portafoglio"):
         if ticker_upper not in st.session_state.portfolio:
             try:
                 with st.spinner(f'Ricerca di {ticker_upper}...'):
-                    t_info = yf.Ticker(ticker_upper)
-                    # Tentativo di recupero nome
-                    name = t_info.info.get('longName', ticker_upper)
-                    price = t_info.info.get('previousClose', 0.0)
+                    t_obj = yf.Ticker(ticker_upper)
+                    info = t_obj.info
+                    # Cerchiamo il prezzo corrente (gestisce diversi mercati)
+                    price = info.get('currentPrice') or info.get('regularMarketPrice') or info.get('previousClose')
+                    name = info.get('longName', ticker_upper)
+                    currency = info.get('currency', 'EUR')
                     
-                    if price == 0: # Se yfinance non trova info, il ticker potrebbe essere errato
-                         st.error("Ticker non trovato o dati non disponibili.")
-                    else:
+                    if price:
                         st.session_state.portfolio[ticker_upper] = {
                             'Nome': name,
                             'Peso': new_weight,
-                            'Prezzo': price
+                            'Prezzo': price,
+                            'Valuta': currency
                         }
                         st.success(f"Aggiunto: {name}")
+                    else:
+                        st.error("Impossibile recuperare il prezzo. Controlla il ticker.")
             except Exception as e:
-                st.error(f"Errore nel recupero dati: {e}")
+                st.error(f"Errore: Ticker non trovato.")
         else:
-            st.warning("L'asset è già presente nel portafoglio.")
+            st.warning("L'asset è già presente.")
 
 # --- AREA PRINCIPALE: GESTIONE PORTAFOGLIO ---
 if st.session_state.portfolio:
-    st.subheader("📝 Gestione Asset e Allocazioni")
+    st.subheader("📝 Gestione Asset e Budget")
     
-    tickers = list(st.session_state.portfolio.keys())
-    
-    # Intestazioni Tabella
-    cols_header = st.columns([3, 1.5, 2, 2, 1])
+    # Intestazioni Tabella (6 colonne)
+    cols_header = st.columns([2.5, 1.2, 1.2, 1.5, 1.5, 0.8])
     cols_header[0].write("**Nome ETF**")
-    cols_header[1].write("**Ticker**")
+    cols_header[1].write("**Prezzo**")
     cols_header[2].write("**Peso %**")
-    cols_header[3].write("**Budget Mensile**")
-    cols_header[4].write("**Azione**")
+    cols_header[3].write("**Mensile**")
+    cols_header[4].write("**Settimanale**")
+    cols_header[5].write("**Azione**")
 
     total_current_weight = 0
     
-    # Righe Asset
-    for ticker in tickers:
+    for ticker in list(st.session_state.portfolio.keys()):
         asset = st.session_state.portfolio[ticker]
-        c1, c2, c3, c4, c5 = st.columns([3, 1.5, 2, 2, 1])
+        c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1.2, 1.2, 1.5, 1.5, 0.8])
         
-        c1.write(f"**{asset['Nome']}**")
-        c2.code(ticker)
+        # 1. Nome e Ticker
+        c1.markdown(f"**{asset['Nome']}**<br><small>{ticker}</small>", unsafe_allow_html=True)
         
-        # Input Peso
-        new_val = c3.number_input(f"Peso % per {ticker}", min_value=0, max_value=100, 
+        # 2. Prezzo (con valuta)
+        c2.markdown(f"<span class='price-tag'>{asset['Prezzo']:.2f} {asset['Valuta']}</span>", unsafe_allow_html=True)
+        
+        # 3. Input Peso %
+        new_val = c3.number_input(f"%", min_value=0, max_value=100, 
                                  value=int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
         st.session_state.portfolio[ticker]['Peso'] = new_val
         total_current_weight += new_val
         
-        # Calcolo budget
-        budget_asset = (new_val / 100) * total_monthly_investment
-        c4.write(f"**{budget_asset:,.2f} €**")
+        # 4. Calcolo Budget Mensile
+        budget_m = (new_val / 100) * total_monthly_investment
+        c4.write(f"**{budget_m:,.2f} €**")
         
-        # Bottone Elimina
-        if c5.button("🗑️", key=f"del_{ticker}"):
+        # 5. Calcolo Budget Settimanale
+        budget_w = budget_m / 4.33
+        c5.write(f"{budget_w:,.2f} €")
+        
+        # 6. Elimina
+        if c6.button("🗑️", key=f"del_{ticker}"):
             del st.session_state.portfolio[ticker]
             st.rerun()
 
     # --- VALIDAZIONE ---
     st.markdown("---")
+    col_v1, col_v2 = st.columns(2)
     if total_current_weight > 100:
-        st.error(f"⚠️ Il totale delle allocazioni è **{total_current_weight}%**. Riduci i pesi per arrivare al 100%.")
+        col_v1.error(f"⚠️ Totale: {total_current_weight}% (Supera il 100%)")
     elif total_current_weight < 100:
-        st.warning(f"ℹ️ Totale allocato: **{total_current_weight}%**. Hai ancora un **{100-total_current_weight}%** da assegnare.")
+        col_v1.warning(f"ℹ️ Totale: {total_current_weight}% (Manca il {100-total_current_weight}%)")
     else:
-        st.success("✅ Portafoglio bilanciato correttamente (100%).")
+        col_v1.success("✅ Portafoglio bilanciato (100%)")
 
-    # --- VISUALIZZAZIONE E ANALISI ---
+    # --- GRAFICI ---
     if total_current_weight > 0:
-        tab1, tab2 = st.tabs(["📊 Distribuzione", "📈 Performance Storica"])
+        t1, t2 = st.tabs(["📊 Distribuzione Peso", "📈 Simulazione Performance"])
         
-        with tab1:
+        with t1:
             plot_data = pd.DataFrame([
                 {'Nome': v['Nome'], 'Peso': v['Peso']} 
                 for k, v in st.session_state.portfolio.items() if v['Peso'] > 0
             ])
-            fig_pie = px.pie(plot_data, values='Peso', names='Nome', hole=0.4, 
-                             color_discrete_sequence=px.colors.qualitative.Pastel)
-            fig_pie.update_layout(title="Composizione Target del Portafoglio")
+            fig_pie = px.pie(plot_data, values='Peso', names='Nome', hole=0.4,
+                             color_discrete_sequence=px.colors.qualitative.Safe)
             st.plotly_chart(fig_pie, use_container_width=True)
 
-        with tab2:
-            st.info("Clicca sul pulsante per scaricare i dati e calcolare l'andamento dell'ultimo anno.")
-            if st.button("🚀 Genera Grafico di Performance"):
-                with st.spinner('Scaricamento dati storici da Yahoo Finance...'):
-                    # Scarico dati per 1 anno
-                    raw_data = yf.download(tickers, period="1y", interval="1d")
+        with t2:
+            if st.button("Genera Grafico Storico (1 Anno)"):
+                with st.spinner('Scaricamento dati...'):
+                    tickers = list(st.session_state.portfolio.keys())
+                    data = yf.download(tickers, period="1y")['Close']
                     
-                    # Estrazione prezzi di chiusura
-                    if len(tickers) > 1:
-                        hist_data = raw_data['Close']
-                    else:
-                        hist_data = raw_data['Close'].to_frame()
-                        hist_data.columns = tickers
+                    if len(tickers) == 1:
+                        data = data.to_frame()
+                        data.columns = tickers
 
-                    # Pulizia dati
-                    hist_data = hist_data.ffill().dropna()
-
-                    if not hist_data.empty:
-                        # Normalizzazione Base 100
-                        # .iloc[0] potrebbe fallire se ci sono NaN all'inizio, bfill() aiuta
-                        norm_data = hist_data.divide(hist_data.bfill().iloc[0]) * 100
+                    data = data.ffill().dropna()
+                    if not data.empty:
+                        # Normalizzazione base 100
+                        norm = data.divide(data.iloc[0]) * 100
                         
-                        # Calcolo Portafoglio Pesato
-                        portfolio_sim = pd.Series(0.0, index=norm_data.index)
+                        # Portafoglio pesato
+                        portfolio_val = pd.Series(0.0, index=norm.index)
                         for t in tickers:
                             weight = st.session_state.portfolio[t]['Peso'] / 100
-                            portfolio_sim += norm_data[t] * weight
+                            portfolio_val += norm[t] * weight
                         
-                        # CREAZIONE GRAFICO
                         fig_line = go.Figure()
-                        
-                        # Linea Portfolio
-                        fig_line.add_trace(go.Scatter(
-                            x=portfolio_sim.index, y=portfolio_sim,
-                            name="IL TUO PORTAFOGLIO",
-                            line=dict(color='#2E7D32', width=4)
-                        ))
-                        
-                        # Linee singoli Asset
+                        fig_line.add_trace(go.Scatter(x=portfolio_val.index, y=portfolio_val, 
+                                                     name="PORTAFOGLIO", line=dict(color='gold', width=4)))
                         for t in tickers:
-                            fig_line.add_trace(go.Scatter(
-                                x=norm_data.index, y=norm_data[t],
-                                name=f"ETF: {t}",
-                                line=dict(width=1, dash='dot'),
-                                opacity=0.5
-                            ))
+                            fig_line.add_trace(go.Scatter(x=norm.index, y=norm[t], name=t, 
+                                                         line=dict(width=1), opacity=0.4))
                         
-                        fig_line.update_layout(
-                            title="Andamento Ipotetico Ultimi 12 Mesi (Base 100)",
-                            xaxis_title="Data",
-                            yaxis_title="Valore Normalizzato (100)",
-                            hovermode="x unified",
-                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                        )
+                        fig_line.update_layout(title="Andamento Ipotetico (Base 100)", hovermode="x unified")
                         st.plotly_chart(fig_line, use_container_width=True)
-                    else:
-                        st.error("Dati non disponibili per il periodo selezionato.")
-
 else:
-    # Stato vuoto
-    st.info("👈 Inizia aggiungendo un ETF dalla barra laterale (usa i ticker di Yahoo Finance).")
-    col_intro1, col_intro2 = st.columns(2)
-    with col_intro1:
-        st.markdown("""
-        ### Come iniziare:
-        1. Inserisci un ticker (es. **SWDA.MI** per iShares MSCI World).
-        2. Scegli la percentuale di allocazione.
-        3. Imposta il tuo budget mensile.
-        4. Visualizza come si sarebbe comportato il portafoglio nell'ultimo anno.
-        """)
-    with col_intro2:
-        st.image("https://images.unsplash.com/photo-1611974717482-58a252ec074c?auto=format&fit=crop&q=80&w=1000")
+    st.info("👈 Inizia aggiungendo un ETF dalla barra laterale per vedere i calcoli di investimento.")
+    st.image("https://images.unsplash.com/photo-1590283603385-17ffb3a7f29f?auto=format&fit=crop&q=80&w=1000", width=700)
