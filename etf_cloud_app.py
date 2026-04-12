@@ -1,128 +1,127 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import requests
+import plotly.express as px
 import json
+import base64
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="ETF Portfolio Pro", layout="wide")
+st.set_page_config(page_title="ETF Portfolio Monitor", layout="wide")
 
-# Inizializzazione Sessione (Per non perdere i dati durante i click)
-if 'df_portfolio' not in st.session_state:
-    st.session_state.df_portfolio = pd.DataFrame(columns=['Ticker', 'Nome', 'Allocazione %', 'Prezzo (€)'])
-
+# Inizializzazione dati
+if 'portfolio' not in st.session_state:
+    st.session_state.portfolio = {}
 if 'monthly_inv' not in st.session_state:
     st.session_state.monthly_inv = 1000.0
 
-# --- FUNZIONI CLOUD ---
-def save_to_cloud(bin_id, api_key):
-    url = f"https://api.jsonbin.io/v3/b/{bin_id}"
-    headers = {"Content-Type": "application/json", "X-Master-Key": api_key}
-    data = {
-        "portfolio": st.session_state.df_portfolio.to_dict('records'),
-        "monthly_inv": st.session_state.monthly_inv
-    }
-    res = requests.put(url, json=data, headers=headers)
-    if res.status_code == 200:
-        st.success("✅ Salvato nel Cloud!")
-    else:
-        st.error("❌ Errore durante il salvataggio.")
+# --- FUNZIONI DI BACKUP (Per Multi-PC senza database) ---
+def get_backup_code():
+    data = {"p": st.session_state.portfolio, "m": st.session_state.monthly_inv}
+    json_str = json.dumps(data)
+    return base64.b64encode(json_str.encode()).decode()
 
-def load_from_cloud(bin_id, api_key):
-    url = f"https://api.jsonbin.io/v3/b/{bin_id}/latest"
-    headers = {"X-Master-Key": api_key}
-    res = requests.get(url, headers=headers)
-    if res.status_code == 200:
-        data = res.json()['record']
-        st.session_state.df_portfolio = pd.DataFrame(data['portfolio'])
-        st.session_state.monthly_inv = data['monthly_inv']
-        st.success("📂 Portafoglio caricato!")
-        st.rerun()
-    else:
-        st.error("❌ Impossibile caricare i dati.")
+def load_backup_code(code):
+    try:
+        decoded = base64.b64decode(code.encode()).decode()
+        data = json.loads(decoded)
+        st.session_state.portfolio = data["p"]
+        st.session_state.monthly_inv = data["m"]
+        st.success("✅ Portafoglio caricato correttamente!")
+    except:
+        st.error("❌ Codice non valido")
 
 # --- INTERFACCIA ---
-st.title("📊 Gestore ETF Professionale")
+st.title("📊 Monitor Portafoglio ETF")
 
-# Sidebar per Cloud
+# Sidebar: Aggiunta e Backup
 with st.sidebar:
-    st.header("☁️ Sincronizzazione Cloud")
-    api_key = st.text_input("JSONBin API Key", type="password")
-    bin_id = st.text_input("JSONBin Bin ID")
-    
-    col1, col2 = st.columns(2)
-    if col1.button("💾 Salva"): save_to_cloud(bin_id, api_key)
-    if col2.button("📂 Carica"): load_from_cloud(bin_id, api_key)
-    
+    st.header("➕ Aggiungi ETF")
+    new_ticker = st.text_input("Ticker o ISIN (es: SWDA.MI, VUSA.L)")
+    if st.button("Aggiungi Asset"):
+        if new_ticker:
+            with st.spinner("Ricerca in corso..."):
+                try:
+                    t_data = yf.Ticker(new_ticker)
+                    # Prova a prendere il nome, altrimenti usa il ticker
+                    name = t_data.info.get('longName', new_ticker.upper())
+                    price = t_data.info.get('previousClose', 0.0)
+                    
+                    st.session_state.portfolio[new_ticker.upper()] = {
+                        "nome": name,
+                        "peso": 0,
+                        "prezzo": price
+                    }
+                    st.success(f"Aggiunto: {new_ticker.upper()}")
+                except:
+                    st.error("Non trovato. Prova con il Ticker di Yahoo (es. CSPX.MI)")
+
     st.divider()
-    st.header("➕ Aggiungi Asset")
-    new_ticker = st.text_input("ISIN o Ticker (es: SWDA.MI)")
-    if st.button("Cerca e Aggiungi"):
-        try:
-            ticker_data = yf.Ticker(new_ticker)
-            name = ticker_data.info.get('longName', new_ticker)
-            price = ticker_data.info.get('previousClose', 0.0)
-            
-            new_row = pd.DataFrame([{
-                'Ticker': new_ticker.upper(),
-                'Nome': name,
-                'Allocazione %': 0,
-                'Prezzo (€)': price
-            }])
-            st.session_state.df_portfolio = pd.concat([st.session_state.df_portfolio, new_row], ignore_index=True)
-            st.rerun()
-        except:
-            st.error("Asset non trovato su Yahoo Finance.")
+    st.header("💾 Sincronizza PC")
+    st.write("Copia questo codice per portarlo su un altro PC:")
+    st.code(get_backup_code(), language=None)
+    
+    import_code = st.text_area("Incolla qui il codice di un altro PC:")
+    if st.button("Importa Portafoglio"):
+        load_backup_code(import_code)
+        st.rerun()
 
 # --- AREA PRINCIPALE ---
-st.session_state.monthly_inv = st.number_input("Investimento Mensile Totale (€)", value=float(st.session_state.monthly_inv))
+st.session_state.monthly_inv = st.number_input("Investimento Mensile Totale (€)", 
+                                              value=float(st.session_state.monthly_inv), step=50.0)
 
-if not st.session_state.df_portfolio.empty:
-    st.subheader("Il tuo Portafoglio")
-    st.write("💡 *Puoi modificare le percentuali e il ticker direttamente nella tabella. Per eliminare un asset, seleziona la riga e premi CANC.*")
-
-    # TABELLA INTERATTIVA (Il cuore dell'app)
-    edited_df = st.data_editor(
-        st.session_state.df_portfolio,
-        num_rows="dynamic", # Permette di aggiungere/rimuovere righe manualmente
-        use_container_width=True,
-        column_config={
-            "Allocazione %": st.column_config.NumberColumn(format="%d%%", min_value=0, max_value=100),
-            "Prezzo (€)": st.column_config.NumberColumn(format="%.2f €", disabled=True),
-        }
-    )
+if st.session_state.portfolio:
+    st.subheader("Asset nel Portafoglio")
     
-    # Aggiorna lo stato con i dati modificati
-    st.session_state.df_portfolio = edited_df
+    # Intestazione Colonne
+    h1, h2, h3, h4, h5 = st.columns([3, 1, 2, 2, 1])
+    h1.write("**Nome ETF**")
+    h2.write("**Prezzo**")
+    h3.write("**Allocazione %**")
+    h4.write("**Budget (€)**")
+    h5.write("**Azione**")
 
-    # Calcoli
-    total_alloc = st.session_state.df_portfolio['Allocazione %'].sum()
-    
-    # Calcolo Euro per ogni riga
+    total_w = 0
+    to_delete = []
+
+    # Lista Asset
+    for ticker, info in st.session_state.portfolio.items():
+        c1, c2, c3, c4, c5 = st.columns([3, 1, 2, 2, 1])
+        
+        c1.write(f"**{info['nome']}**\n({ticker})")
+        c2.write(f"{info['prezzo']:.2f}€")
+        
+        # Modifica percentuale (Aggiorna istantaneamente)
+        new_peso = c3.number_input("%", 0, 100, int(info['peso']), key=f"w_{ticker}")
+        st.session_state.portfolio[ticker]['peso'] = new_peso
+        total_w += new_peso
+        
+        # Calcolo Euro
+        euro_val = (new_peso / 100) * st.session_state.monthly_inv
+        c4.write(f"**{euro_val:,.2f} €**")
+        
+        # Bottone Elimina
+        if c5.button("🗑️", key=f"del_{ticker}"):
+            to_delete.append(ticker)
+
+    # Esecuzione eliminazione
+    for t in to_delete:
+        del st.session_state.portfolio[t]
+        st.rerun()
+
     st.divider()
-    st.subheader("Resoconto Investimento")
-    
-    resoconto = st.session_state.df_portfolio.copy()
-    resoconto['Budget (€)'] = (resoconto['Allocazione %'] / 100) * st.session_state.monthly_inv
-    resoconto['Quote (stimate)'] = resoconto['Budget (€)'] / resoconto['Prezzo (€)']
-    
-    st.table(resoconto[['Ticker', 'Allocazione %', 'Budget (€)', 'Quote (stimate)']].style.format({
-        'Budget (€)': '{:.2f} €',
-        'Quote (stimate)': '{:.4f}'
-    }))
 
-    # Validazione
-    if total_alloc > 100:
-        st.error(f"⚠️ Il totale delle percentuali è {total_alloc}%. Deve essere 100%.")
-    elif total_alloc < 100:
-        st.warning(f"Il totale è {total_alloc}%. Hai ancora {100-total_alloc}% da allocare.")
+    # Controllo Totale
+    if total_w > 100:
+        st.error(f"Il totale è {total_w}%. Supera il 100%!")
+    elif total_w < 100:
+        st.warning(f"Totale allocato: {total_w}% (Manca il {100-total_w}%)")
     else:
-        st.success("✅ Portafoglio bilanciato al 100%.")
+        st.success("Portafoglio correttamente allocato al 100%")
 
     # Grafico
-    import plotly.express as px
-    fig = px.pie(resoconto, values='Allocazione %', names='Ticker', hole=0.4)
-    st.plotly_chart(fig)
-
+    if total_w > 0:
+        df_plot = pd.DataFrame([{"ETF": k, "Peso": v['peso']} for k, v in st.session_state.portfolio.items()])
+        fig = px.pie(df_plot, values='Peso', names='ETF', hole=0.4, title="Distribuzione Asset")
+        st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("Aggiungi il tuo primo ETF dalla barra laterale per iniziare.")
+    st.info("Inizia aggiungendo un ETF dal menu a sinistra.")
