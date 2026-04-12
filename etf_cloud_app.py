@@ -69,7 +69,12 @@ if st.sidebar.button("Aggiungi al Portafoglio"):
 if st.session_state.portfolio:
     st.subheader("📝 Gestione Asset e Budget")
     
-    # Intestazioni Tabella (6 colonne)
+    # Bottone di emergenza per pulire se i dati vecchi creano errori
+    if st.button("🔄 Reset Totale Portafoglio"):
+        st.session_state.portfolio = {}
+        st.rerun()
+
+    # Intestazioni Tabella
     cols_header = st.columns([2.5, 1.2, 1.2, 1.5, 1.5, 0.8])
     cols_header[0].write("**Nome ETF**")
     cols_header[1].write("**Prezzo**")
@@ -84,15 +89,21 @@ if st.session_state.portfolio:
         asset = st.session_state.portfolio[ticker]
         c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1.2, 1.2, 1.5, 1.5, 0.8])
         
+        # Recupero sicuro dei dati con valori di default se mancano
+        nome_display = asset.get('Nome', ticker)
+        prezzo_display = asset.get('Prezzo', 0.0)
+        valuta_display = asset.get('Valuta', 'EUR') # Default a EUR se manca
+        peso_attuale = asset.get('Peso', 0)
+
         # 1. Nome e Ticker
-        c1.markdown(f"**{asset['Nome']}**<br><small>{ticker}</small>", unsafe_allow_html=True)
+        c1.markdown(f"**{nome_display}**<br><small>{ticker}</small>", unsafe_allow_html=True)
         
-        # 2. Prezzo (con valuta)
-        c2.markdown(f"<span class='price-tag'>{asset['Prezzo']:.2f} {asset['Valuta']}</span>", unsafe_allow_html=True)
+        # 2. Prezzo (Gestione sicura KeyError)
+        c2.markdown(f"<span class='price-tag'>{prezzo_display:.2f} {valuta_display}</span>", unsafe_allow_html=True)
         
         # 3. Input Peso %
         new_val = c3.number_input(f"%", min_value=0, max_value=100, 
-                                 value=int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
+                                 value=int(peso_attuale), key=f"w_{ticker}", label_visibility="collapsed")
         st.session_state.portfolio[ticker]['Peso'] = new_val
         total_current_weight += new_val
         
@@ -108,7 +119,6 @@ if st.session_state.portfolio:
         if c6.button("🗑️", key=f"del_{ticker}"):
             del st.session_state.portfolio[ticker]
             st.rerun()
-
     # --- VALIDAZIONE ---
     st.markdown("---")
     col_v1, col_v2 = st.columns(2)
