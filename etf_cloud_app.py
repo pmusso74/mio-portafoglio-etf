@@ -3,11 +3,12 @@ import yfinance as yf
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import io
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="ETF Portfolio Manager", layout="wide", page_icon="📊")
 
-# CSS per migliorare la leggibilità delle tabelle
+# CSS per miglioramenti estetici
 st.markdown("""
     <style>
     .stNumberInput div div input { font-weight: bold; }
@@ -21,157 +22,153 @@ st.title("📊 ETF Portfolio Builder & Monitor")
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = {}
 
-# --- SIDEBAR: INPUT ---
-st.sidebar.header("⚙️ Impostazioni Base")
+# --- SIDEBAR: SALVA & CARICA ---
+st.sidebar.header("💾 Salva & Carica")
+
+# 1. DOWNLOAD (Salvataggio)
+if st.session_state.portfolio:
+    # Trasformiamo il dizionario in DataFrame per l'esportazione
+    save_data = []
+    for t, d in st.session_state.portfolio.items():
+        save_data.append({
+            'Ticker': t,
+            'Nome': d.get('Nome', ''),
+            'Peso': d.get('Peso', 0),
+            'Prezzo': d.get('Prezzo', 0.0),
+            'Valuta': d.get('Valuta', 'EUR')
+        })
+    df_save = pd.DataFrame(save_data)
+    csv = df_save.to_csv(index=False).encode('utf-8')
+    
+    st.sidebar.download_button(
+        label="📥 Scarica Portafoglio (CSV)",
+        data=csv,
+        file_name="mio_portafoglio_etf.csv",
+        mime="text/csv",
+    )
+
+# 2. UPLOAD (Caricamento)
+uploaded_file = st.sidebar.file_uploader("Carica un file CSV salvato", type="csv")
+if uploaded_file is not None:
+    try:
+        df_load = pd.read_csv(uploaded_file)
+        new_portfolio = {}
+        for _, row in df_load.iterrows():
+            new_portfolio[row['Ticker']] = {
+                'Nome': row['Nome'],
+                'Peso': int(row['Peso']),
+                'Prezzo': float(row['Prezzo']),
+                'Valuta': row['Valuta']
+            }
+        st.session_state.portfolio = new_portfolio
+        st.sidebar.success("✅ Portafoglio Caricato!")
+        # Non facciamo rerun qui per evitare loop, lo stato si aggiornerà al prossimo widget
+    except Exception as e:
+        st.sidebar.error("Errore nel caricamento del file.")
+
+st.sidebar.markdown("---")
+
+# --- SIDEBAR: IMPOSTAZIONI INVESTIMENTO ---
+st.sidebar.header("⚙️ Impostazioni Investimento")
 total_monthly_investment = st.sidebar.number_input(
     "Investimento Mensile Totale (€)", min_value=0.0, value=1000.0, step=50.0
 )
-
-# Calcolo settimanale medio (4.33 settimane in un mese)
 total_weekly_investment = total_monthly_investment / 4.33
-
-st.sidebar.info(f"Equivale a circa: **{total_weekly_investment:,.2f} € / settimana**")
+st.sidebar.info(f"Settimanale: **{total_weekly_investment:,.2f} €**")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("➕ Aggiungi Asset")
-new_ticker = st.sidebar.text_input("Ticker Yahoo (es: SWDA.MI, CSSX5E.MI)")
-new_weight = st.sidebar.slider("Allocazione iniziale (%)", 0, 100, 10)
+new_ticker = st.sidebar.text_input("Ticker Yahoo (es: SWDA.MI)")
+new_weight = st.sidebar.slider("Peso iniziale (%)", 0, 100, 10)
 
-if st.sidebar.button("Aggiungi al Portafoglio"):
+if st.sidebar.button("Aggiungi ETF"):
     if new_ticker:
         ticker_upper = new_ticker.upper().strip()
-        if ticker_upper not in st.session_state.portfolio:
-            try:
-                with st.spinner(f'Ricerca di {ticker_upper}...'):
-                    t_obj = yf.Ticker(ticker_upper)
-                    info = t_obj.info
-                    # Cerchiamo il prezzo corrente (gestisce diversi mercati)
-                    price = info.get('currentPrice') or info.get('regularMarketPrice') or info.get('previousClose')
-                    name = info.get('longName', ticker_upper)
-                    currency = info.get('currency', 'EUR')
-                    
-                    if price:
-                        st.session_state.portfolio[ticker_upper] = {
-                            'Nome': name,
-                            'Peso': new_weight,
-                            'Prezzo': price,
-                            'Valuta': currency
-                        }
-                        st.success(f"Aggiunto: {name}")
-                    else:
-                        st.error("Impossibile recuperare il prezzo. Controlla il ticker.")
-            except Exception as e:
-                st.error(f"Errore: Ticker non trovato.")
-        else:
-            st.warning("L'asset è già presente.")
+        try:
+            with st.spinner(f'Ricerca {ticker_upper}...'):
+                t_obj = yf.Ticker(ticker_upper)
+                info = t_obj.info
+                price = info.get('currentPrice') or info.get('regularMarketPrice') or info.get('previousClose')
+                name = info.get('longName', ticker_upper)
+                currency = info.get('currency', 'EUR')
+                
+                if price:
+                    st.session_state.portfolio[ticker_upper] = {
+                        'Nome': name, 'Peso': new_weight, 'Prezzo': price, 'Valuta': currency
+                    }
+                    st.rerun()
+                else:
+                    st.error("Dati non trovati.")
+        except:
+            st.error("Errore di connessione o ticker errato.")
 
-# --- AREA PRINCIPALE: GESTIONE PORTAFOGLIO ---
+# --- AREA PRINCIPALE: GESTIONE ---
 if st.session_state.portfolio:
-    st.subheader("📝 Gestione Asset e Budget")
+    st.subheader("📝 Il tuo Portafoglio")
     
-    # Bottone di emergenza per pulire se i dati vecchi creano errori
-    if st.button("🔄 Reset Totale Portafoglio"):
-        st.session_state.portfolio = {}
-        st.rerun()
-
-    # Intestazioni Tabella
-    cols_header = st.columns([2.5, 1.2, 1.2, 1.5, 1.5, 0.8])
-    cols_header[0].write("**Nome ETF**")
-    cols_header[1].write("**Prezzo**")
-    cols_header[2].write("**Peso %**")
-    cols_header[3].write("**Mensile**")
-    cols_header[4].write("**Settimanale**")
-    cols_header[5].write("**Azione**")
+    # Intestazioni
+    cols = st.columns([2.5, 1.2, 1.2, 1.5, 1.5, 0.8])
+    labels = ["**Nome ETF**", "**Prezzo**", "**Peso %**", "**Mensile**", "**Settimanale**", "**Azione**"]
+    for col, label in zip(cols, labels): col.write(label)
 
     total_current_weight = 0
-    
-    for ticker in list(st.session_state.portfolio.keys()):
+    tickers_list = list(st.session_state.portfolio.keys())
+
+    for ticker in tickers_list:
         asset = st.session_state.portfolio[ticker]
         c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1.2, 1.2, 1.5, 1.5, 0.8])
         
-        # Recupero sicuro dei dati con valori di default se mancano
-        nome_display = asset.get('Nome', ticker)
-        prezzo_display = asset.get('Prezzo', 0.0)
-        valuta_display = asset.get('Valuta', 'EUR') # Default a EUR se manca
-        peso_attuale = asset.get('Peso', 0)
-
-        # 1. Nome e Ticker
-        c1.markdown(f"**{nome_display}**<br><small>{ticker}</small>", unsafe_allow_html=True)
+        c1.markdown(f"**{asset.get('Nome', ticker)}**<br><small>{ticker}</small>", unsafe_allow_html=True)
+        c2.markdown(f"<span class='price-tag'>{asset.get('Prezzo',0):.2f} {asset.get('Valuta','EUR')}</span>", unsafe_allow_html=True)
         
-        # 2. Prezzo (Gestione sicura KeyError)
-        c2.markdown(f"<span class='price-tag'>{prezzo_display:.2f} {valuta_display}</span>", unsafe_allow_html=True)
-        
-        # 3. Input Peso %
-        new_val = c3.number_input(f"%", min_value=0, max_value=100, 
-                                 value=int(peso_attuale), key=f"w_{ticker}", label_visibility="collapsed")
+        # Input Peso
+        new_val = c3.number_input("%", 0, 100, int(asset.get('Peso', 0)), key=f"w_{ticker}", label_visibility="collapsed")
         st.session_state.portfolio[ticker]['Peso'] = new_val
         total_current_weight += new_val
         
-        # 4. Calcolo Budget Mensile
-        budget_m = (new_val / 100) * total_monthly_investment
-        c4.write(f"**{budget_m:,.2f} €**")
+        # Budget
+        bm = (new_val / 100) * total_monthly_investment
+        c4.write(f"**{bm:,.2f} €**")
+        c5.write(f"{bm/4.33:,.2f} €")
         
-        # 5. Calcolo Budget Settimanale
-        budget_w = budget_m / 4.33
-        c5.write(f"{budget_w:,.2f} €")
-        
-        # 6. Elimina
         if c6.button("🗑️", key=f"del_{ticker}"):
             del st.session_state.portfolio[ticker]
             st.rerun()
-    # --- VALIDAZIONE ---
+
+    # Validazione
     st.markdown("---")
-    col_v1, col_v2 = st.columns(2)
     if total_current_weight > 100:
-        col_v1.error(f"⚠️ Totale: {total_current_weight}% (Supera il 100%)")
+        st.error(f"⚠️ Totale: {total_current_weight}% - Supera il 100%!")
     elif total_current_weight < 100:
-        col_v1.warning(f"ℹ️ Totale: {total_current_weight}% (Manca il {100-total_current_weight}%)")
+        st.warning(f"ℹ️ Totale: {total_current_weight}% - Hai ancora {100-total_current_weight}% libero.")
     else:
-        col_v1.success("✅ Portafoglio bilanciato (100%)")
+        st.success("✅ Portafoglio bilanciato correttamente.")
 
-    # --- GRAFICI ---
-    if total_current_weight > 0:
-        t1, t2 = st.tabs(["📊 Distribuzione Peso", "📈 Simulazione Performance"])
-        
-        with t1:
-            plot_data = pd.DataFrame([
-                {'Nome': v['Nome'], 'Peso': v['Peso']} 
-                for k, v in st.session_state.portfolio.items() if v['Peso'] > 0
-            ])
-            fig_pie = px.pie(plot_data, values='Peso', names='Nome', hole=0.4,
-                             color_discrete_sequence=px.colors.qualitative.Safe)
-            st.plotly_chart(fig_pie, use_container_width=True)
-
-        with t2:
-            if st.button("Genera Grafico Storico (1 Anno)"):
-                with st.spinner('Scaricamento dati...'):
-                    tickers = list(st.session_state.portfolio.keys())
-                    data = yf.download(tickers, period="1y")['Close']
+    # Grafici
+    t1, t2 = st.tabs(["📊 Distribuzione", "📈 Performance 1Y"])
+    with t1:
+        plot_df = pd.DataFrame([{'N': v['Nome'], 'P': v['Peso']} for v in st.session_state.portfolio.values() if v['Peso'] > 0])
+        if not plot_df.empty:
+            st.plotly_chart(px.pie(plot_df, values='P', names='N', hole=0.4), use_container_width=True)
+            
+    with t2:
+        if st.button("Carica Grafico Storico"):
+            with st.spinner('Analisi in corso...'):
+                data = yf.download(tickers_list, period="1y")['Close']
+                if len(tickers_list) == 1: 
+                    data = data.to_frame()
+                    data.columns = tickers_list
+                data = data.ffill().dropna()
+                if not data.empty:
+                    norm = data.divide(data.bfill().iloc[0]) * 100
+                    port_sim = pd.Series(0.0, index=norm.index)
+                    for t in tickers_list:
+                        port_sim += norm[t] * (st.session_state.portfolio[t]['Peso'] / 100)
                     
-                    if len(tickers) == 1:
-                        data = data.to_frame()
-                        data.columns = tickers
-
-                    data = data.ffill().dropna()
-                    if not data.empty:
-                        # Normalizzazione base 100
-                        norm = data.divide(data.iloc[0]) * 100
-                        
-                        # Portafoglio pesato
-                        portfolio_val = pd.Series(0.0, index=norm.index)
-                        for t in tickers:
-                            weight = st.session_state.portfolio[t]['Peso'] / 100
-                            portfolio_val += norm[t] * weight
-                        
-                        fig_line = go.Figure()
-                        fig_line.add_trace(go.Scatter(x=portfolio_val.index, y=portfolio_val, 
-                                                     name="PORTAFOGLIO", line=dict(color='gold', width=4)))
-                        for t in tickers:
-                            fig_line.add_trace(go.Scatter(x=norm.index, y=norm[t], name=t, 
-                                                         line=dict(width=1), opacity=0.4))
-                        
-                        fig_line.update_layout(title="Andamento Ipotetico (Base 100)", hovermode="x unified")
-                        st.plotly_chart(fig_line, use_container_width=True)
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=port_sim.index, y=port_sim, name="PORTAFOGLIO", line=dict(color='gold', width=4)))
+                    for t in tickers_list:
+                        fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=t, line=dict(width=1), opacity=0.3))
+                    st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("👈 Inizia aggiungendo un ETF dalla barra laterale per vedere i calcoli di investimento.")
-    st.image("https://images.unsplash.com/photo-1590283603385-17ffb3a7f29f?auto=format&fit=crop&q=80&w=1000", width=700)
+    st.info("👈 Inizia aggiungendo un ETF o caricando un file salvato.")
