@@ -1,144 +1,104 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import plotly.express as px
-from supabase import create_client, Client
+from supabase import create_client
 
-# --- CONFIGURAZIONE DATABASE ---
-# Inserisci qui i tuoi dati Supabase o usa i "secrets" di Streamlit
-URL = st.sidebar.text_input("Supabase URL", type="password")
-KEY = st.sidebar.text_input("Supabase Key", type="password")
+# --- CONNESSIONE ---
+st.sidebar.header("🔌 Connessione Cloud")
+url = st.sidebar.text_input("Supabase URL")
+key = st.sidebar.text_input("Supabase Anon Key", type="password")
 
-def get_supabase():
-    if URL and KEY:
-        return create_client(URL, KEY)
+def get_db():
+    if url and key:
+        try:
+            return create_client(url, key)
+        except Exception as e:
+            st.error(f"Errore connessione: {e}")
     return None
 
-# --- FUNZIONI DI SALVATAGGIO ---
-def save_to_cloud(portfolio_id, portfolio_dict, monthly_inv):
-    supabase = get_supabase()
-    if supabase:
-        data = {
-            "id": portfolio_id,
-            "data": portfolio_dict,
-            "monthly_investment": monthly_inv
-        }
-        supabase.table("portfolios").upsert(data).execute()
-        st.sidebar.success("✅ Salvato nel Cloud!")
-    else:
-        st.sidebar.error("Configura URL e Key di Supabase")
+# --- FUNZIONI CORE ---
+def save_data(p_id, p_dict, m_inv):
+    db = get_db()
+    if db:
+        try:
+            # Prepariamo i dati
+            row = {"id": p_id, "data": p_dict, "monthly_investment": m_inv}
+            # Usiamo upsert: se l'ID esiste aggiorna, altrimenti inserisce
+            response = db.table("portfolios").upsert(row).execute()
+            st.sidebar.success("✅ Salvato con successo!")
+        except Exception as e:
+            st.sidebar.error(f"❌ Errore durante il salvataggio: {e}")
 
-def load_from_cloud(portfolio_id):
-    supabase = get_supabase()
-    if supabase:
-        response = supabase.table("portfolios").select("*").eq("id", portfolio_id).execute()
-        if response.data:
-            return response.data[0]
+def load_data(p_id):
+    db = get_db()
+    if db:
+        try:
+            response = db.table("portfolios").select("*").eq("id", p_id).execute()
+            if response.data:
+                return response.data[0]
+            else:
+                st.sidebar.warning("Nessun portafoglio trovato con questo ID.")
+        except Exception as e:
+            st.sidebar.error(f"❌ Errore nel caricamento: {e}")
     return None
 
-# --- INTERFACCIA STREAMLIT ---
-st.set_page_config(page_title="Cloud ETF Monitor", layout="wide")
-st.title("🌐 Cloud ETF Portfolio Manager")
-
-# Sidebar per Accesso
-st.sidebar.header("🔐 Accesso Portafoglio")
-portfolio_id = st.sidebar.text_input("ID Portafoglio (es: mio_portafoglio_2024)", "default_user")
+# --- INTERFACCIA ---
+st.title("🚀 Cloud ETF Monitor")
 
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = {}
-    st.session_state.monthly_investment = 1000.0
+if 'm_inv' not in st.session_state:
+    st.session_state.m_inv = 1000.0
 
-# Caricamento iniziale
-if st.sidebar.button("Carica dal Cloud"):
-    cloud_data = load_from_cloud(portfolio_id)
-    if cloud_data:
-        st.session_state.portfolio = cloud_data['data']
-        st.session_state.monthly_investment = cloud_data['monthly_investment']
-        st.success("Dati caricati correttamente!")
+# Sidebar Accesso
+p_id = st.sidebar.text_input("ID Portafoglio (es: marco77)", "default")
+
+if st.sidebar.button("📂 Carica Portafoglio"):
+    res = load_data(p_id)
+    if res:
+        st.session_state.portfolio = res['data']
+        st.session_state.m_inv = res['monthly_investment']
         st.rerun()
-    else:
-        st.warning("Nessun portafoglio trovato con questo ID.")
 
-# Impostazioni Investimento
-st.sidebar.markdown("---")
-st.session_state.monthly_investment = st.sidebar.number_input(
-    "Investimento Mensile Totale (€)", min_value=0.0, value=float(st.session_state.monthly_investment)
-)
+# Input investimento
+st.session_state.m_inv = st.sidebar.number_input("Investimento Mensile (€)", value=float(st.session_state.m_inv))
 
-# Aggiunta Asset
-with st.sidebar.expander("➕ Aggiungi nuovo ETF"):
-    new_ticker = st.text_input("Ticker (es: SWDA.MI)")
-    new_weight = st.slider("Allocazione (%)", 0, 100, 10)
-    if st.button("Aggiungi"):
-        if new_ticker:
-            with st.spinner("Cercando..."):
-                try:
-                    info = yf.Ticker(new_ticker).info
-                    st.session_state.portfolio[new_ticker.upper()] = {
-                        'Nome': info.get('longName', new_ticker),
-                        'Peso': new_weight,
-                        'Prezzo': info.get('previousClose', 0.0)
-                    }
-                    st.rerun()
-                except:
-                    st.error("Ticker non trovato.")
+# Aggiunta ETF
+with st.sidebar.expander("➕ Aggiungi ETF"):
+    t_input = st.text_input("Ticker (es: SWDA.MI)")
+    w_input = st.slider("Peso %", 0, 100, 10)
+    if st.button("Inserisci"):
+        if t_input:
+            st.session_state.portfolio[t_input.upper()] = {
+                'Peso': w_input,
+                'Nome': t_input.upper() # Per velocità usiamo il ticker come nome
+            }
+            st.rerun()
 
-# --- DISPLAY E MODIFICA ---
+# Gestione Portafoglio
 if st.session_state.portfolio:
-    st.subheader(f"Portafoglio: {portfolio_id}")
+    st.write(f"### Portafoglio: `{p_id}`")
     
-    total_weight = 0
-    to_delete = []
-
-    # Tabella interattiva
-    for ticker, info in st.session_state.portfolio.items():
-        col1, col2, col3, col4, col5 = st.columns([3, 1, 2, 2, 1])
-        
-        col1.write(f"**{info['Nome']}**")
-        col2.code(ticker)
-        
-        # Modifica percentuale
-        new_p = col3.number_input(f"Peso %", 0, 100, int(info['Peso']), key=f"p_{ticker}")
-        st.session_state.portfolio[ticker]['Peso'] = new_p
-        total_weight += new_p
-        
-        # Calcolo Euro
-        euro_val = (new_p / 100) * st.session_state.monthly_investment
-        col4.write(f"{euro_val:,.2f} €")
-        
-        if col5.button("🗑️", key=f"del_{ticker}"):
-            to_delete.append(ticker)
-
-    # Rimozione differita
-    for t in to_delete:
+    total_w = 0
+    to_del = []
+    
+    for t, info in st.session_state.portfolio.items():
+        c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
+        c1.write(f"**{t}**")
+        new_w = c2.number_input("%", 0, 100, int(info['Peso']), key=f"w_{t}")
+        st.session_state.portfolio[t]['Peso'] = new_w
+        total_w += new_w
+        c3.write(f"{(new_w/100)*st.session_state.m_inv:.2f} €")
+        if c4.button("🗑️", key=f"del_{t}"):
+            to_del.append(t)
+            
+    for t in to_del:
         del st.session_state.portfolio[t]
         st.rerun()
 
-    # Barra di controllo totale
-    st.markdown("---")
-    if total_weight > 100:
-        st.error(f"Errore: Totale {total_weight}% (supera 100%)")
-    else:
-        st.info(f"Totale allocato: {total_weight}% | Rimanente: {100-total_weight}%")
+    st.warning(f"Totale allocato: {total_w}%")
 
-    # BOTTONE SALVATAGGIO
-    if st.button("💾 SALVA MODIFICHE NEL CLOUD"):
-        save_to_cloud(portfolio_id, st.session_state.portfolio, st.session_state.monthly_investment)
-
-    # GRAFICI
-    col_chart1, col_chart2 = st.columns(2)
-    with col_chart1:
-        df_plot = pd.DataFrame([{'ETF': k, 'Peso': v['Peso']} for k, v in st.session_state.portfolio.items()])
-        fig = px.pie(df_plot, values='Peso', names='ETF', hole=0.4, title="Asset Allocation")
-        st.plotly_chart(fig)
-    
-    with col_chart2:
-        if st.button("📈 Mostra Performance Storica"):
-            tickers = list(st.session_state.portfolio.keys())
-            hist = yf.download(tickers, period="1y")['Close'].ffill()
-            norm = (hist / hist.iloc[0]) * 100
-            port_perf = sum(norm[t] * (st.session_state.portfolio[t]['Peso']/100) for t in tickers)
-            st.line_chart(port_perf)
-
+    if st.button("💾 SALVA NEL CLOUD"):
+        save_data(p_id, st.session_state.portfolio, st.session_state.m_inv)
 else:
-    st.info("Configura Supabase e carica un portafoglio o creane uno nuovo.")
+    st.info("Portafoglio vuoto. Aggiungi un ETF o carica dal cloud.")
