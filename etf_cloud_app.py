@@ -2,154 +2,145 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import requests
+import json
 
-# --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="ETF Auto-Cloud Monitor", layout="wide")
+# --- CONFIGURAZIONE ---
+st.set_page_config(page_title="ETF Auto-Sync Monitor", layout="wide")
 
-# --- CONNESSIONE E AUTO-SETUP ---
-st.sidebar.title("🔐 Accesso Cloud")
-sb_url = st.sidebar.text_input("Supabase URL")
-sb_key = st.sidebar.text_input("Supabase Service Role Key (Secret)", type="password")
-
-def run_sql(sql_query):
-    """Esegue SQL su Supabase tramite REST API"""
-    url = f"{sb_url}/rest/v1/"
-    headers = {
-        "apikey": sb_key,
-        "Authorization": f"Bearer {sb_key}",
-        "Content-Type": "application/json",
-        "Prefer": "return=representation"
-    }
-    # Nota: Supabase non espone direttamente l'esecuzione SQL via REST per sicurezza 
-    # di default, quindi usiamo un trucco: se la tabella non esiste, proviamo a crearla
-    # tramite una chiamata rpc o segnaliamo l'istruzione.
-    pass
-
-def init_app():
-    """Inizializza lo stato dell'app"""
-    if 'portfolio' not in st.session_state:
-        st.session_state.portfolio = {}
-    if 'm_inv' not in st.session_state:
-        st.session_state.m_inv = 1000.0
-
-init_app()
-
-# --- FUNZIONI DATABASE ---
-def cloud_sync(action="load", p_id="default"):
-    if not sb_url or not sb_key:
-        st.warning("Inserisci le chiavi Supabase nella barra laterale.")
-        return
+# --- FUNZIONI CLOUD (REDIS) ---
+def cloud_execute(command, key=None, value=None):
+    url = st.sidebar.text_input("Upstash URL", type="password")
+    token = st.sidebar.text_input("Upstash Token", type="password")
     
-    headers = {"apikey": sb_key, "Authorization": f"Bearer {sb_key}", "Content-Type": "application/json"}
-    table_url = f"{sb_url}/rest/v1/portfolios"
+    if not url or not token:
+        return None
+    
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    if command == "set":
+        payload = json.dumps(value)
+        requests.post(f"{url}/set/{key}", data=payload, headers=headers)
+    elif command == "get":
+        res = requests.get(f"{url}/get/{key}", headers=headers).json()
+        return json.loads(res['result']) if res.get('result') else None
 
-    if action == "save":
-        data = {
-            "id": p_id,
-            "data": st.session_state.portfolio,
-            "monthly_investment": st.session_state.m_inv
-        }
-        res = requests.post(table_url, json=data, headers={**headers, "Prefer": "resolution=merge-duplicates"})
-        if res.status_code in [200, 201]:
-            st.success("☁️ Salvataggio completato!")
-        else:
-            st.error(f"Errore: Assicurati di aver creato la tabella. Log: {res.text}")
+# --- INIZIALIZZAZIONE ---
+if 'portfolio' not in st.session_state:
+    st.session_state.portfolio = {}
+if 'monthly_inv' not in st.session_state:
+    st.session_state.monthly_inv = 1000.0
 
-    elif action == "load":
-        res = requests.get(f"{table_url}?id=eq.{p_id}", headers=headers)
-        if res.status_code == 200 and res.json():
-            item = res.json()[0]
-            st.session_state.portfolio = item['data']
-            st.session_state.m_inv = item['monthly_investment']
-            st.sidebar.success("✅ Portafoglio Caricato!")
+# --- SIDEBAR: GESTIONE CLOUD ---
+st.sidebar.title("☁️ Sincronizzazione")
+user_id = st.sidebar.text_input("Il tuo ID Portafoglio (es: marco_99)", "default_user")
+
+col_s1, col_s2 = st.sidebar.columns(2)
+if col_s1.button("📂 Carica Cloud"):
+    data = cloud_execute("get", user_id)
+    if data:
+        st.session_state.portfolio = data['portfolio']
+        st.session_state.monthly_inv = data['monthly_inv']
+        st.sidebar.success("Caricato!")
+        st.rerun()
+    else:
+        st.sidebar.error("ID non trovato")
+
+if col_s2.button("💾 Salva Cloud"):
+    to_save = {"portfolio": st.session_state.portfolio, "monthly_inv": st.session_state.monthly_inv}
+    cloud_execute("set", user_id, to_save)
+    st.sidebar.success("Salvato!")
+
+st.sidebar.divider()
+
+# --- AGGIUNTA ETF ---
+st.sidebar.subheader("➕ Aggiungi ETF")
+isin_ticker = st.sidebar.text_input("Inserisci Ticker o ISIN (es: SWDA.MI)")
+if st.sidebar.button("Cerca e Aggiungi"):
+    with st.spinner("Ricerca in corso..."):
+        try:
+            ticker = yf.Ticker(isin_ticker)
+            name = ticker.info.get('longName', isin_ticker)
+            price = ticker.info.get('previousClose', 0.0)
+            st.session_state.portfolio[isin_ticker.upper()] = {
+                "nome": name,
+                "peso": 0,
+                "prezzo": price
+            }
             st.rerun()
-        else:
-            st.sidebar.error("Portafoglio non trovato o tabella mancante.")
+        except:
+            st.error("Asset non trovato. Usa i ticker di Yahoo Finance (es: CSPX.MI)")
 
-# --- INTERFACCIA UTENTE ---
-st.title("📈 ETF Portfolio Cloud Manager")
-
-# Setup ID
-p_id = st.text_input("👤 Inserisci il tuo ID Portafoglio (es: mio_nome_2024)", "default_user")
-
-col_btn1, col_btn2 = st.columns(2)
-if col_btn1.button("📂 Carica dal Cloud"):
-    cloud_sync("load", p_id)
-
-# Sezione Aiuto per Tabella
-with st.expander("🛠️ Se il caricamento fallisce (Primo Setup)"):
-    st.write("Se è la prima volta che usi Supabase, devi creare la tabella. Copia questo codice e incollalo nel tasto 'SQL Editor' di Supabase:")
-    st.code(f"""
-    create table portfolios (
-      id text primary key,
-      data jsonb,
-      monthly_investment float
-    );
-    alter table portfolios disable row level security;
-    """, language="sql")
-
-st.divider()
+# --- INTERFACCIA PRINCIPALE ---
+st.title("📊 Monitor ETF Multi-PC")
 
 # Input Investimento
-st.session_state.m_inv = st.number_input("💰 Investimento Mensile Totale (€)", value=float(st.session_state.m_inv), step=50.0)
+st.session_state.monthly_inv = st.number_input("Budget Mensile Totale (€)", value=float(st.session_state.monthly_inv), step=50.0)
 
-# Aggiunta ETF
-with st.sidebar.expander("➕ Aggiungi Asset", expanded=True):
-    ticker_in = st.text_input("Ticker o ISIN (es: SWDA.MI, VUSA.L)")
-    weight_in = st.slider("Allocazione iniziale (%)", 0, 100, 10)
-    if st.button("Aggiungi al Portafoglio"):
-        if ticker_in:
-            with st.spinner("Recupero dati..."):
-                try:
-                    name = yf.Ticker(ticker_in).info.get('longName', ticker_in)
-                    st.session_state.portfolio[ticker_in.upper()] = {"nome": name, "peso": weight_in}
-                    st.rerun()
-                except:
-                    st.error("Ticker non trovato.")
-
-# Gestione Asset
 if st.session_state.portfolio:
-    st.subheader("📝 Il tuo Portafoglio")
+    st.subheader("Configurazione Asset")
     
-    total_w = 0
+    # Intestazioni Tabella
+    h1, h2, h3, h4, h5 = st.columns([3, 1, 2, 2, 1])
+    h1.write("**Nome**")
+    h2.write("**Prezzo**")
+    h3.write("**Allocazione %**")
+    h4.write("**Investimento (€)**")
+    h5.write("**Azione**")
+    
+    total_weight = 0
     to_delete = []
 
-    for t, info in st.session_state.portfolio.items():
-        c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
-        c1.write(f"**{info['nome']}** ({t})")
+    # Riga per ogni ETF
+    for ticker, info in st.session_state.portfolio.items():
+        c1, c2, c3, c4, c5 = st.columns([3, 1, 2, 2, 1])
         
-        # Modifica Percentuale
-        new_w = c2.number_input(f"Peso %", 0, 100, int(info['peso']), key=f"w_{t}")
-        st.session_state.portfolio[t]['peso'] = new_w
-        total_w += new_w
+        c1.write(f"{info['nome']} \n ({ticker})")
+        c2.write(f"{info['prezzo']:.2f} €")
         
-        # Calcolo Euro
-        c3.write(f"**{(new_w/100)*st.session_state.m_inv:.2f} €**")
+        # MODIFICA PERCENTUALE (Totalmente Interattiva)
+        new_w = c3.number_input("Peso %", 0, 100, int(info['peso']), key=f"w_{ticker}")
+        st.session_state.portfolio[ticker]['peso'] = new_w
+        total_weight += new_w
         
-        if c4.button("🗑️", key=f"del_{t}"):
-            to_delete.append(t)
+        # CALCOLO EURO
+        euro_amount = (new_w / 100) * st.session_state.monthly_inv
+        c4.write(f"**{euro_amount:,.2f} €**")
+        
+        # ELIMINA ASSET
+        if c5.button("🗑️", key=f"del_{ticker}"):
+            to_delete.append(ticker)
 
-    for t in to_delete:
-        del st.session_state.portfolio[t]
+    # Rimozione
+    if to_delete:
+        for t in to_delete:
+            del st.session_state.portfolio[t]
         st.rerun()
 
     st.divider()
-    
-    # Barra di controllo
-    if total_w > 100:
-        st.error(f"ATTENZIONE: Il totale è {total_w}%. Riduci le percentuali!")
-    elif total_w < 100:
-        st.warning(f"Totale allocato: {total_w}% (Manca il {100-total_w}%)")
+
+    # Barra di Stato
+    if total_weight > 100:
+        st.error(f"Errore: Il totale è {total_weight}%. Riduci di {total_weight-100}%")
+    elif total_weight < 100:
+        st.warning(f"Totale allocato: {total_weight}% (Manca il {100-total_weight}% per raggiungere il budget)")
     else:
-        st.success("Ottimo! Il totale è 100%")
+        st.success("Portafoglio bilanciato correttamente (100%)")
 
-    if st.button("💾 SALVA TUTTO NEL CLOUD"):
-        cloud_sync("save", p_id)
+    # Grafico riassuntivo
+    if total_weight > 0:
+        import plotly.express as px
+        df = pd.DataFrame([{"Asset": k, "Peso": v['peso']} for k, v in st.session_state.portfolio.items() if v['peso'] > 0])
+        fig = px.pie(df, values='Peso', names='Asset', hole=0.4, title="Distribuzione del tuo capitale")
+        st.plotly_chart(fig, use_container_width=True)
 
-    # Grafico
-    df_plot = pd.DataFrame([{"Asset": k, "Peso": v['peso']} for k, v in st.session_state.portfolio.items()])
-    import plotly.express as px
-    fig = px.pie(df_plot, values='Peso', names='Asset', hole=0.4, title="Distribuzione Portafoglio")
-    st.plotly_chart(fig)
 else:
-    st.info("Aggiungi un ETF per iniziare.")
+    st.info("👈 Inizia aggiungendo un ETF dalla barra laterale. Poi salva nel cloud per vederlo su altri PC.")
+
+# Istruzioni in basso
+with st.expander("ℹ️ Come usare su altri PC"):
+    st.write("""
+    1. Apri questo script su un altro PC.
+    2. Inserisci lo stesso **URL** e **Token** di Upstash nella barra laterale.
+    3. Inserisci lo stesso **ID Portafoglio**.
+    4. Clicca su **Carica Cloud**.
+    """)
