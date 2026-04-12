@@ -2,151 +2,144 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import requests
-import json
 
-# --- CONFIGURAZIONE STORAGE CLOUD (Senza configurazione per l'utente) ---
-# Utilizziamo un database pubblico temporaneo che non richiede chiavi private
-STORAGE_API = "https://kvdb.io/S5vYV9hPZ6f7v8k1S2v3v4/" # Bucket pubblico generato per questa app
+# --- CONFIGURAZIONE STORAGE CLOUD ---
+STORAGE_API = "https://kvdb.io/S5vYV9hPZ6f7v8k1S2v3v4/" 
 
 def cloud_save(user_id, data):
-    try:
-        requests.post(f"{STORAGE_API}{user_id}", json=data)
-    except:
-        pass
+    try: requests.post(f"{STORAGE_API}{user_id}", json=data)
+    except: pass
 
 def cloud_load(user_id):
     try:
         response = requests.get(f"{STORAGE_API}{user_id}")
-        if response.status_code == 200:
-            return response.json()
-    except:
-        return None
+        if response.status_code == 200: return response.json()
+    except: return None
     return None
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="ETF Auto-Monitor", layout="wide")
+st.set_page_config(page_title="ETF Cloud Monitor", layout="wide")
 
-# Inizializzazione Sessione
-if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = {}
-if 'm_inv' not in st.session_state:
-    st.session_state.m_inv = 1000.0
-if 'loaded' not in st.session_state:
-    st.session_state.loaded = False
+if 'portfolio' not in st.session_state: st.session_state.portfolio = {}
+if 'm_inv' not in st.session_state: st.session_state.m_inv = 1000.0
+if 'loaded' not in st.session_state: st.session_state.loaded = False
 
 # --- INTERFACCIA: ACCESSO ---
-st.title("🌐 ETF Cloud Monitor (Automatico)")
-user_id = st.text_input("🔑 Inserisci il tuo ID Personale per sincronizzare i dati", 
-                        placeholder="Es: marco_secret_2024", help="Usa lo stesso ID su qualsiasi PC per ritrovare i tuoi dati")
+st.title("🌐 ETF Cloud Monitor & Performance")
+user_id = st.text_input("🔑 ID Personale per sincronizzare", placeholder="Es: mio_portafoglio_segreto")
 
 if user_id and not st.session_state.loaded:
-    with st.spinner("Sincronizzazione cloud..."):
-        data = cloud_load(user_id)
-        if data:
-            st.session_state.portfolio = data.get('portfolio', {})
-            st.session_state.m_inv = data.get('m_inv', 1000.0)
-            st.session_state.loaded = True
-            st.success("Dati recuperati!")
-            st.rerun()
+    data = cloud_load(user_id)
+    if data:
+        st.session_state.portfolio = data.get('portfolio', {})
+        st.session_state.m_inv = data.get('m_inv', 1000.0)
+        st.session_state.loaded = True
+        st.rerun()
 
-# --- LOGICA DI SALVATAGGIO AUTOMATICO ---
 def trigger_autosave():
     if user_id:
-        data = {"portfolio": st.session_state.portfolio, "m_inv": st.session_state.m_inv}
-        cloud_save(user_id, data)
+        cloud_save(user_id, {"portfolio": st.session_state.portfolio, "m_inv": st.session_state.m_inv})
 
-# --- SIDEBAR: AGGIUNTA ASSET ---
+# --- SIDEBAR: AGGIUNTA ---
 with st.sidebar:
     st.header("➕ Aggiungi ETF")
-    query = st.text_input("Inserisci ISIN o Ticker", placeholder="es: SWDA.MI o IE00B4L5Y983")
-    
-    if st.button("Cerca e Aggiungi"):
+    query = st.text_input("Ticker o ISIN", placeholder="es: SWDA.MI")
+    if st.button("Aggiungi"):
         if query:
-            with st.spinner("Ricerca..."):
-                try:
-                    ticker = yf.Ticker(query)
-                    # Se l'ISIN non restituisce info, yfinance a volte fallisce, quindi verifichiamo
-                    info = ticker.info
-                    name = info.get('longName', query.upper())
-                    price = info.get('previousClose', 0.0)
-                    
-                    st.session_state.portfolio[query.upper()] = {
-                        "nome": name,
-                        "peso": 10,
-                        "prezzo": price
-                    }
-                    trigger_autosave()
-                    st.rerun()
-                except:
-                    st.error("Asset non trovato. Prova con il Ticker (es. CSPX.MI)")
+            try:
+                info = yf.Ticker(query).info
+                st.session_state.portfolio[query.upper()] = {
+                    "nome": info.get('longName', query.upper()),
+                    "peso": 10,
+                    "prezzo": info.get('previousClose', 0.0)
+                }
+                trigger_autosave()
+                st.rerun()
+            except: st.error("Non trovato.")
 
 # --- AREA PRINCIPALE ---
 if not user_id:
-    st.info("👋 Benvenuto! Inserisci un ID Personale in alto per iniziare.")
+    st.info("Inserisci un ID in alto per caricare i tuoi dati.")
     st.stop()
 
-# Impostazione Investimento Mensile
-old_inv = st.session_state.m_inv
-st.session_state.m_inv = st.number_input("💰 Investimento Mensile Totale (€)", 
-                                         value=float(st.session_state.m_inv), step=50.0)
-if old_inv != st.session_state.m_inv:
-    trigger_autosave()
+st.session_state.m_inv = st.number_input("💰 Investimento Mensile Totale (€)", value=float(st.session_state.m_inv))
 
 if st.session_state.portfolio:
-    st.subheader("📝 Gestione Portafoglio")
-    
-    # Intestazioni
-    cols = st.columns([3, 1, 2, 2, 1])
-    cols[0].write("**Nome**")
-    cols[1].write("**Prezzo**")
-    cols[2].write("**Allocazione %**")
-    cols[3].write("**Investimento**")
-    cols[4].write("**Azione**")
+    tab1, tab2 = st.tabs(["📋 Gestione Portafoglio", "📈 Andamento Storico"])
 
-    total_weight = 0
-    to_delete = []
+    with tab1:
+        total_weight = 0
+        to_delete = []
+        
+        # Header Tabella
+        cols = st.columns([3, 1, 2, 2, 1])
+        cols[0].write("**Nome**"); cols[1].write("**Prezzo**"); cols[2].write("**Peso %**"); cols[3].write("**Euro**")
 
-    for t, info in list(st.session_state.portfolio.items()):
-        c1, c2, c3, c4, c5 = st.columns([3, 1, 2, 2, 1])
-        
-        c1.write(f"**{info['nome']}**\n({t})")
-        c2.write(f"{info['prezzo']:.2f}€")
-        
-        # Modifica Peso
-        new_peso = c3.number_input("%", 0, 100, int(info['peso']), key=f"w_{t}")
-        if new_peso != info['peso']:
-            st.session_state.portfolio[t]['peso'] = new_peso
-            trigger_autosave()
-        
-        total_weight += new_peso
-        
-        # Calcolo Euro
-        euro_val = (new_peso / 100) * st.session_state.m_inv
-        c4.write(f"**{euro_val:,.2f} €**")
-        
-        # Elimina
-        if c5.button("🗑️", key=f"del_{t}"):
-            del st.session_state.portfolio[t]
-            trigger_autosave()
-            st.rerun()
+        for t, info in list(st.session_state.portfolio.items()):
+            c1, c2, c3, c4, c5 = st.columns([3, 1, 2, 2, 1])
+            c1.write(f"{info['nome']}\n({t})")
+            c2.write(f"{info['prezzo']:.2f}€")
+            
+            new_p = c3.number_input("%", 0, 100, int(info['peso']), key=f"w_{t}")
+            if new_p != info['peso']:
+                st.session_state.portfolio[t]['peso'] = new_p
+                trigger_autosave()
+            
+            total_weight += new_p
+            c4.write(f"**{(new_p/100)*st.session_state.m_inv:,.2f} €**")
+            if c5.button("🗑️", key=f"del_{t}"):
+                del st.session_state.portfolio[t]
+                trigger_autosave(); st.rerun()
 
-    st.divider()
+        st.divider()
+        if total_weight != 100: st.warning(f"Allocazione totale: {total_weight}%")
+        else: st.success("Allocazione 100%")
 
-    # Stato del bilanciamento
-    if total_weight > 100:
-        st.error(f"Totale: {total_weight}% (Supera il 100%!)")
-    elif total_weight < 100:
-        st.warning(f"Totale: {total_weight}% (Hai ancora il {100-total_weight}% libero)")
-    else:
-        st.success("Bilanciamento perfetto (100%)")
+    with tab2:
+        st.subheader("Andamento del Portafoglio (Ultimi 12 mesi)")
+        if st.button("🚀 Genera/Aggiorna Grafico"):
+            with st.spinner("Scaricamento dati storici..."):
+                tickers = list(st.session_state.portfolio.keys())
+                # Scarichiamo i dati dell'ultimo anno
+                data = yf.download(tickers, period="1y")['Close']
+                
+                if len(tickers) == 1:
+                    data = data.to_frame()
+                    data.columns = tickers
 
-    # Grafico
-    df_plot = pd.DataFrame([{"ETF": k, "Peso": v['peso']} for k, v in st.session_state.portfolio.items()])
-    fig = px.pie(df_plot, values='Peso', names='ETF', hole=0.4, title="Asset Allocation")
-    st.plotly_chart(fig, use_container_width=True)
+                # Normalizzazione a base 100 (tutto parte da 100)
+                norm_data = (data / data.iloc[0]) * 100
+                
+                # Calcolo del portafoglio pesato
+                portfolio_perf = pd.Series(0, index=norm_data.index)
+                for t in tickers:
+                    peso = st.session_state.portfolio[t]['peso'] / 100
+                    portfolio_perf += norm_data[t] * peso
+                
+                # Creazione Grafico con Plotly
+                fig_perf = go.Figure()
+                
+                # Traccia Portafoglio
+                fig_perf.add_trace(go.Scatter(x=portfolio_perf.index, y=portfolio_perf, 
+                                             name="MIO PORTAFOGLIO", 
+                                             line=dict(color='gold', width=4)))
+                
+                # Tracce singoli ETF (opzionali, più trasparenti)
+                for t in tickers:
+                    fig_perf.add_trace(go.Scatter(x=norm_data.index, y=norm_data[t], 
+                                                 name=t, opacity=0.3, line=dict(dash='dot')))
+                
+                fig_perf.update_layout(
+                    title="Performance ipotetica di 100€ investiti 1 anno fa",
+                    xaxis_title="Data",
+                    yaxis_title="Valore (Base 100)",
+                    hovermode="x unified"
+                )
+                st.plotly_chart(fig_perf, use_container_width=True)
+                
+                st.caption("Il grafico mostra come si sarebbe evoluto un investimento iniziale di 100€ suddiviso secondo le tue attuali percentuali.")
 
 else:
-    st.info("Il tuo portafoglio è vuoto. Aggiungi un ETF dalla barra laterale.")
-
-st.caption("☁️ I dati vengono salvati automaticamente nel cloud ogni volta che modifichi qualcosa.")
+    st.info("Aggiungi ETF per iniziare.")
