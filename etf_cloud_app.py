@@ -27,7 +27,7 @@ if 'm_inv' not in st.session_state: st.session_state.m_inv = 1000.0
 if 'loaded' not in st.session_state: st.session_state.loaded = False
 
 # --- INTERFACCIA: ACCESSO ---
-st.title("🌐 ETF Cloud Monitor & Performance")
+st.title("🌐 ETF Cloud Monitor & Portfolio")
 user_id = st.text_input("🔑 ID Personale per sincronizzare", placeholder="Es: mio_portafoglio_segreto")
 
 if user_id and not st.session_state.loaded:
@@ -64,7 +64,16 @@ if not user_id:
     st.info("Inserisci un ID in alto per caricare i tuoi dati.")
     st.stop()
 
-st.session_state.m_inv = st.number_input("💰 Investimento Mensile Totale (€)", value=float(st.session_state.m_inv))
+# Input Budget Mensile
+col_budget1, col_budget2 = st.columns(2)
+with col_budget1:
+    st.session_state.m_inv = st.number_input("💰 Investimento Mensile Totale (€)", value=float(st.session_state.m_inv), step=50.0)
+
+# Calcolo settimanale (Mensile * 12 mesi / 52 settimane)
+w_inv_total = (st.session_state.m_inv * 12) / 52
+
+with col_budget2:
+    st.metric("📅 Equivalente Settimanale", f"{w_inv_total:.2f} €")
 
 if st.session_state.portfolio:
     tab1, tab2 = st.tabs(["📋 Gestione Portafoglio", "📈 Andamento Storico"])
@@ -73,23 +82,39 @@ if st.session_state.portfolio:
         total_weight = 0
         to_delete = []
         
-        # Header Tabella
-        cols = st.columns([3, 1, 2, 2, 1])
-        cols[0].write("**Nome**"); cols[1].write("**Prezzo**"); cols[2].write("**Peso %**"); cols[3].write("**Euro**")
+        # Header Tabella con nuove colonne
+        cols = st.columns([2.5, 1, 1.5, 1.5, 1.5, 0.5])
+        cols[0].write("**Nome ETF**")
+        cols[1].write("**Prezzo**")
+        cols[2].write("**Peso %**")
+        cols[3].write("**Mensile (€)**")
+        cols[4].write("**Settim. (€)**")
+        cols[5].write("**Az.**")
 
         for t, info in list(st.session_state.portfolio.items()):
-            c1, c2, c3, c4, c5 = st.columns([3, 1, 2, 2, 1])
-            c1.write(f"{info['nome']}\n({t})")
+            c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1, 1.5, 1.5, 1.5, 0.5])
+            
+            # Info Base
+            c1.write(f"**{info['nome']}**\n({t})")
             c2.write(f"{info['prezzo']:.2f}€")
             
+            # Input Percentuale
             new_p = c3.number_input("%", 0, 100, int(info['peso']), key=f"w_{t}")
             if new_p != info['peso']:
                 st.session_state.portfolio[t]['peso'] = new_p
                 trigger_autosave()
             
             total_weight += new_p
-            c4.write(f"**{(new_p/100)*st.session_state.m_inv:,.2f} €**")
-            if c5.button("🗑️", key=f"del_{t}"):
+            
+            # Calcoli Euro
+            m_euro = (new_p / 100) * st.session_state.m_inv
+            w_euro = (m_euro * 12) / 52
+            
+            c4.write(f"**{m_euro:,.2f}**")
+            c5.write(f"{w_euro:,.2f}")
+            
+            # Elimina
+            if c6.button("🗑️", key=f"del_{t}"):
                 del st.session_state.portfolio[t]
                 trigger_autosave(); st.rerun()
 
@@ -102,44 +127,36 @@ if st.session_state.portfolio:
         if st.button("🚀 Genera/Aggiorna Grafico"):
             with st.spinner("Scaricamento dati storici..."):
                 tickers = list(st.session_state.portfolio.keys())
-                # Scarichiamo i dati dell'ultimo anno
                 data = yf.download(tickers, period="1y")['Close']
                 
                 if len(tickers) == 1:
                     data = data.to_frame()
                     data.columns = tickers
 
-                # Normalizzazione a base 100 (tutto parte da 100)
+                # Normalizzazione a base 100
                 norm_data = (data / data.iloc[0]) * 100
                 
                 # Calcolo del portafoglio pesato
-                portfolio_perf = pd.Series(0, index=norm_data.index)
+                portfolio_perf = pd.Series(0.0, index=norm_data.index)
                 for t in tickers:
                     peso = st.session_state.portfolio[t]['peso'] / 100
-                    portfolio_perf += norm_data[t] * peso
+                    portfolio_perf += norm_data[t].fillna(method='ffill') * peso
                 
-                # Creazione Grafico con Plotly
                 fig_perf = go.Figure()
-                
-                # Traccia Portafoglio
                 fig_perf.add_trace(go.Scatter(x=portfolio_perf.index, y=portfolio_perf, 
                                              name="MIO PORTAFOGLIO", 
                                              line=dict(color='gold', width=4)))
                 
-                # Tracce singoli ETF (opzionali, più trasparenti)
                 for t in tickers:
                     fig_perf.add_trace(go.Scatter(x=norm_data.index, y=norm_data[t], 
                                                  name=t, opacity=0.3, line=dict(dash='dot')))
                 
                 fig_perf.update_layout(
                     title="Performance ipotetica di 100€ investiti 1 anno fa",
-                    xaxis_title="Data",
-                    yaxis_title="Valore (Base 100)",
-                    hovermode="x unified"
+                    xaxis_title="Data", yaxis_title="Valore (Base 100)",
+                    hovermode="x unified", template="plotly_dark"
                 )
                 st.plotly_chart(fig_perf, use_container_width=True)
-                
-                st.caption("Il grafico mostra come si sarebbe evoluto un investimento iniziale di 100€ suddiviso secondo le tue attuali percentuali.")
 
 else:
     st.info("Aggiungi ETF per iniziare.")
