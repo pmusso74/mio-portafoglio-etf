@@ -112,9 +112,9 @@ st.title("💰 ETF PAC Planner")
 if not st.session_state.portfolio:
     st.info("Aggiungi un ETF dal menu a sinistra per iniziare.")
 else:
-    # Tabella
-    h = st.columns([2.5, 1.2, 0.8, 0.8, 1, 1, 1])
-    headers = ["Asset", "Dati ISIN/Tipo", "Prezzo €", "Peso %", "Mensile €", "Drift", "Azioni"]
+    # Tabella (Aggiornata intestazione colonna 2)
+    h = st.columns([2.5, 0.8, 0.8, 0.8, 1, 1, 1])
+    headers = ["Asset", "Tipo", "Prezzo €", "Peso %", "Mensile €", "Drift", "Azioni"]
     for col, text in zip(h, headers): col.write(f"**{text}**")
 
     total_val = sum(a['Quote_Reali'] * a['Prezzo'] * a['Cambio'] for a in st.session_state.portfolio.values())
@@ -124,18 +124,18 @@ else:
         target_eur = (asset['Peso'] / 100) * st.session_state.total_budget
         v_attuale = asset['Quote_Reali'] * p_eur
         
-        c1, c2, c3, c4, c5, c6, c7 = st.columns([2.5, 1.2, 0.8, 0.8, 1, 1, 1])
+        c1, c2, c3, c4, c5, c6, c7 = st.columns([2.5, 0.8, 0.8, 0.8, 1, 1, 1])
         
         with c2:
-            asset['ISIN'] = st.text_input("ISIN", asset['ISIN'], key=f"isin_{ticker}", label_visibility="collapsed", placeholder="Codice ISIN")
+            # Rimossa la riga dell'ISIN, rimane solo il tipo di politica
             asset['Politica'] = st.selectbox("P", ["Acc", "Dist"], index=0 if asset['Politica']=="Acc" else 1, key=f"pol_{ticker}", label_visibility="collapsed")
 
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:40]}</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='ticker-label'>{ticker}</div>", unsafe_allow_html=True)
             
-            # LINK JUSTETF
-            if asset['ISIN'] and len(asset['ISIN']) > 5:
+            # LINK JUSTETF (funziona se l'ISIN è stato trovato da Yahoo in fase di creazione)
+            if asset.get('ISIN') and len(asset['ISIN']) > 5:
                 link_url = f"https://www.justetf.com/it/etf-profile.html?isin={asset['ISIN']}"
                 st.markdown(f"<a href='{link_url}' target='_blank' class='just-link-btn'>Scheda JustETF</a>", unsafe_allow_html=True)
             else:
@@ -177,67 +177,69 @@ else:
     if st.session_state.portfolio:
         tickers = list(st.session_state.portfolio.keys())
         try:
-            # Download dati storici
             data = yf.download(tickers, period="1y", progress=False)['Close']
             if len(tickers) == 1: 
                 data = data.to_frame()
                 data.columns = tickers
             
-            # Pulizia e Normalizzazione a base 100
             data = data.ffill()
             norm = (data / data.iloc[0]) * 100
             
-            # Inizio creazione Grafico con Figure Objects
             fig = go.Figure()
             
-            # 1. Calcolo e Aggiunta Linea PAC (Somma Pesata)
-            pesi_list = []
-            for t in tickers:
-                pesi_list.append(st.session_state.portfolio[t]['Peso'])
-            
+            # Linea PAC
+            pesi_list = [st.session_state.portfolio[t]['Peso'] for t in tickers]
             total_peso = sum(pesi_list)
+            
             if total_peso > 0:
-                # Calcoliamo la media pesata riga per riga
                 pac_line = (norm * pesi_list).sum(axis=1) / total_peso
-                
                 fig.add_trace(go.Scatter(
-                    x=pac_line.index, 
-                    y=pac_line,
+                    x=pac_line.index, y=pac_line,
                     name="⭐ IL TUO PAC (Totale)",
                     line=dict(color='red', width=4),
-                    zorder=10 # Porta la linea in primo piano
+                    zorder=10
                 ))
 
-            # 2. Aggiunta linee singoli Asset (usando i Nomi)
+            # Linee Singoli Asset con Nomi
             for t in tickers:
-                nome_asset = st.session_state.portfolio[t]['Nome']
                 fig.add_trace(go.Scatter(
-                    x=norm.index, 
-                    y=norm[t],
-                    name=nome_asset,
-                    line=dict(width=1.5),
-                    opacity=0.7
+                    x=norm.index, y=norm[t],
+                    name=st.session_state.portfolio[t]['Nome'][:25],
+                    line=dict(width=1.5), opacity=0.7
                 ))
 
             fig.update_layout(
-                template="plotly_white",
-                height=500,
+                template="plotly_white", height=450,
                 legend=dict(orientation="h", y=-0.2),
-                hovermode="x unified",
-                yaxis_title="Rendimento (Base 100)",
-                margin=dict(l=0, r=0, t=30, b=0)
+                hovermode="x unified", yaxis_title="Rendimento (Base 100)",
+                margin=dict(l=0, r=0, t=20, b=0)
             )
-            
             st.plotly_chart(fig, use_container_width=True)
             
         except Exception as e:
-            st.warning(f"Dati storici non disponibili per il grafico: {e}")
+            st.warning("Dati storici momentaneamente non disponibili.")
 
-    # --- ALLOCAZIONE ---
+    # --- ALLOCAZIONE E BUDGET ---
     if total_val > 0:
         st.markdown("---")
-        df_pie = pd.DataFrame([{'Asset': a['Nome'], 'Valore': a['Quote_Reali'] * a['Prezzo'] * a['Cambio']} for a in st.session_state.portfolio.values() if a['Quote_Reali'] > 0])
-        fig_pie = px.pie(df_pie, values='Valore', names='Asset', title="Distribuzione Reale Portafoglio", hole=0.4)
-        st.plotly_chart(fig_pie, use_container_width=True)
+        st.subheader("📊 Distribuzione Reale Portafoglio")
+        
+        col_pie, col_stats = st.columns([2, 1])
+        
+        with col_pie:
+            df_pie = pd.DataFrame([{'Asset': a['Nome'], 'Valore': a['Quote_Reali'] * a['Prezzo'] * a['Cambio']} for a in st.session_state.portfolio.values() if a['Quote_Reali'] > 0])
+            fig_pie = px.pie(df_pie, values='Valore', names='Asset', hole=0.4)
+            fig_pie.update_layout(margin=dict(l=20, r=20, t=20, b=20), height=300)
+            st.plotly_chart(fig_pie, use_container_width=True)
+            
+        with col_stats:
+            # Calcolo rapporto tra investito e budget
+            ratio_budget = tot_investito / st.session_state.total_budget if st.session_state.total_budget > 0 else 0
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.metric("Capitale Totale Investito", f"{tot_investito:,.2f} €")
+            st.metric("Budget Mensile Impostato", f"{st.session_state.total_budget:,.2f} €")
+            st.metric("Copertura Mesi di PAC", f"{ratio_budget:.1f} Mensilità", 
+                      help="Quante volte il budget mensile è contenuto nel capitale totale versato finora.")
 
-st.caption("Nota: La linea rossa rappresenta l'andamento del portafoglio se avessi mantenuto i pesi attuali costanti nell'ultimo anno.")
+st.caption("Nota: La linea rossa rappresenta l'andamento simulato del portafoglio se avessi mantenuto i pesi attuali costanti nell'ultimo anno.")
