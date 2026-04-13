@@ -57,36 +57,57 @@ def save_data_locally():
         return True
     return False
 
-def load_data_locally():
-    if os.path.exists(DB_FILE):
-        try:
-            df_load = pd.read_csv(DB_FILE).fillna("")
-            new_port = {}
-            for _, row in df_load.iterrows():
-                t = str(row['Ticker']).strip().upper()
-                new_port[t] = {
-                    'Nome': row.get('Nome', t), 'ISIN': str(row.get('ISIN', '')).strip().upper(),
-                    'Politica': str(row.get('Politica', 'Acc')), 'TER': str(row.get('TER', '')),
-                    'Peso': float(row.get('Peso', 0)), 'Prezzo': float(row.get('Prezzo', 0)),
-                    'Valuta': str(row.get('Valuta', 'EUR')), 'Cambio': float(row.get('Cambio', 1.0))
-                }
-            st.session_state.portfolio = new_port
-            st.session_state.total_budget = float(df_load['Total_Budget'].iloc[0]) if 'Total_Budget' in df_load.columns else 1000.0
-            return True
-        except: return False
-    return False
+def load_from_df(df):
+    """Utility per mappare un DataFrame al portfolio in session_state"""
+    df = df.fillna("")
+    new_port = {}
+    for _, row in df.iterrows():
+        t = str(row['Ticker']).strip().upper()
+        new_port[t] = {
+            'Nome': row.get('Nome', t), 
+            'ISIN': str(row.get('ISIN', '')).strip().upper(),
+            'Politica': str(row.get('Politica', 'Acc')), 
+            'TER': str(row.get('TER', '')),
+            'Peso': float(row.get('Peso', 0)), 
+            'Prezzo': float(row.get('Prezzo', 0)),
+            'Valuta': str(row.get('Valuta', 'EUR')), 
+            'Cambio': float(row.get('Cambio', 1.0))
+        }
+    st.session_state.portfolio = new_port
+    if 'Total_Budget' in df.columns:
+        st.session_state.total_budget = float(df['Total_Budget'].iloc[0])
 
 # --- INIZIALIZZAZIONE ---
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = {}
-    load_data_locally()
+    # Caricamento automatico all'avvio dal file di sistema
+    if os.path.exists(DB_FILE):
+        df_init = pd.read_csv(DB_FILE)
+        load_from_df(df_init)
+
 if 'total_budget' not in st.session_state:
     st.session_state.total_budget = 1000.0
 
 # --- SIDEBAR ---
 st.sidebar.header("💾 Gestione")
+
+# Tasto Salva (Sovrascrive pac_data.csv)
 if st.sidebar.button("💾 SALVA PORTAFOGLIO"):
-    if save_data_locally(): st.sidebar.success("Salvato correttamente!")
+    if save_data_locally():
+        st.sidebar.success(f"Salvato in {DB_FILE}")
+
+st.sidebar.markdown("---")
+
+# Tasto Carica Manuale (Da file esterno)
+uploaded_file = st.sidebar.file_uploader("📥 Carica file CSV esterno", type="csv")
+if uploaded_file is not None:
+    try:
+        df_manual = pd.read_csv(uploaded_file)
+        load_from_df(df_manual)
+        st.sidebar.success("File caricato!")
+        st.rerun() # Forza aggiornamento UI
+    except Exception as e:
+        st.sidebar.error(f"Errore: {e}")
 
 st.sidebar.markdown("---")
 st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", min_value=0.0, value=float(st.session_state.total_budget))
@@ -110,7 +131,7 @@ if st.sidebar.button("Aggiungi ETF"):
                     'Valuta': y_info.get('currency', 'EUR'), 'Cambio': get_exchange_rate(y_info.get('currency', 'EUR'))
                 }
                 st.rerun()
-        except: st.sidebar.error("Ticker errato.")
+        except: st.sidebar.error("Errore: Ticker non valido.")
 
 # --- MAIN ---
 st.title("💰 ETF PAC Planner")
@@ -155,7 +176,7 @@ if st.session_state.portfolio:
     # --- PERFORMANCE ---
     st.subheader("📈 Analisi Rendimento Storico (1 Anno)")
     
-    if st.button("🚀 Calcola Performance"):
+    if st.button("🚀 Calcola Rendimenti"):
         with st.spinner("Analisi dati..."):
             try:
                 hist_data = yf.download(tickers_list, period="1y")['Close']
@@ -169,39 +190,28 @@ if st.session_state.portfolio:
                     for t in tickers_list:
                         port_line += norm[t] * (st.session_state.portfolio[t]['Peso'] / 100)
                     
-                    ret_1y_pac = port_line.iloc[-1] - 100
-                    
                     # Grafico
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC (Complessivo)", line=dict(color='#FF3B30', width=4)))
+                    fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC", line=dict(color='#FF3B30', width=4)))
                     for t in tickers_list:
                         fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:30], line=dict(width=1.2), opacity=0.3))
-                    fig.update_layout(template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.05))
+                    fig.update_layout(template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.1))
                     st.plotly_chart(fig, use_container_width=True)
 
-                    # --- TABELLA RENDIMENTI SINGOLI (Richiesta Utente) ---
-                    st.markdown("### 📊 Rendimento Dettagliato dei Singoli Asset")
+                    # Rendimenti Singoli
+                    st.markdown("### 📊 Dettaglio per Singolo Asset")
                     r_cols = st.columns([3, 1, 1, 1.5])
-                    labels = ["**Asset**", "**Rendimento 1A**", "**Rendimento 6M**", "**Prezzo Inizio / Fine**"]
-                    for col, label in zip(r_cols, labels): col.write(label)
+                    for col, label in zip(r_cols, ["**Asset**", "**Rendimento 1A**", "**Rendimento 6M**", "**Prezzo Inizio / Fine**"]): col.write(label)
                     
                     for t in tickers_list:
-                        # Calcolo rendimenti individuali
-                        ret_1y_ind = ((hist_data[t].iloc[-1] / hist_data[t].iloc[0]) - 1) * 100
-                        ret_6m_ind = ((hist_data[t].iloc[-1] / hist_data[t].iloc[-len(hist_data)//2]) - 1) * 100
+                        ret_1y = ((hist_data[t].iloc[-1] / hist_data[t].iloc[0]) - 1) * 100
+                        ret_6m = ((hist_data[t].iloc[-1] / hist_data[t].iloc[-len(hist_data)//2]) - 1) * 100
                         
-                        c_a, c_b, c_c, c_d = st.columns([3, 1, 1, 1.5])
-                        c_a.write(f"**{st.session_state.portfolio[t]['Nome']}**")
-                        
-                        # Colore rendimento 1A
-                        color_1y = "pos-ret" if ret_1y_ind >= 0 else "neg-ret"
-                        c_b.markdown(f"<span class='{color_1y}'>{ret_1y_ind:+.2f}%</span>", unsafe_allow_html=True)
-                        
-                        # Colore rendimento 6M
-                        color_6m = "pos-ret" if ret_6m_ind >= 0 else "neg-ret"
-                        c_c.markdown(f"<span class='{color_6m}'>{ret_6m_ind:+.2f}%</span>", unsafe_allow_html=True)
-                        
-                        c_d.write(f"{hist_data[t].iloc[0]:.2f} → {hist_data[t].iloc[-1]:.2f} €")
+                        ca, cb, cc, cd = st.columns([3, 1, 1, 1.5])
+                        ca.write(f"**{st.session_state.portfolio[t]['Nome']}**")
+                        cb.markdown(f"<span class='{'pos-ret' if ret_1y>=0 else 'neg-ret'}'>{ret_1y:+.2f}%</span>", unsafe_allow_html=True)
+                        cc.markdown(f"<span class='{'pos-ret' if ret_6m>=0 else 'neg-ret'}'>{ret_6m:+.2f}%</span>", unsafe_allow_html=True)
+                        cd.write(f"{hist_data[t].iloc[0]:.2f} → {hist_data[t].iloc[-1]:.2f} €")
                     
                 else: st.error("Dati non trovati.")
             except Exception as e: st.error(f"Errore: {e}")
@@ -211,4 +221,4 @@ if st.session_state.portfolio:
     if not df_plot.empty:
         st.plotly_chart(px.pie(df_plot, values='Peso', names='ETF', hole=0.4, title="Ripartizione Budget"), use_container_width=True)
 else:
-    st.info("👈 Inizia aggiungendo un ETF.")
+    st.info("👈 Inizia aggiungendo un ETF o caricando un file CSV.")
