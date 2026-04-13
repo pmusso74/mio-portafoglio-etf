@@ -9,7 +9,31 @@ import time
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="ETF PAC Planner Pro", layout="wide", page_icon="💰")
 DB_FILE = "pac_data.csv"
-UPDATE_INTERVAL = 600  # 10 minuti in secondi
+UPDATE_INTERVAL = 600  # 10 minuti
+
+# --- INIZIALIZZAZIONE STATO (Cruciale per evitare l'AttributeError) ---
+if 'portfolio' not in st.session_state:
+    st.session_state.portfolio = {}
+if 'last_update' not in st.session_state:
+    st.session_state.last_update = 0.0
+if 'total_budget' not in st.session_state:
+    st.session_state.total_budget = 1000.0
+
+# --- CARICAMENTO DATI DA FILE (Solo al primo avvio) ---
+if not st.session_state.portfolio and os.path.exists(DB_FILE):
+    try:
+        df = pd.read_csv(DB_FILE).fillna("")
+        for _, r in df.iterrows():
+            st.session_state.portfolio[r['Ticker']] = {
+                'Nome': r['Nome'], 'ISIN': r['ISIN'], 'Politica': r['Politica'],
+                'TER': r['TER'], 'Peso': float(r['Peso']), 'Prezzo': float(r['Prezzo']),
+                'PrevClose': float(r.get('PrevClose', r['Prezzo'])), 'Valuta': r['Valuta'],
+                'Cambio': float(r['Cambio']), 'Investito_Reale': float(r['Investito_Reale']),
+                'Quote_Reali': float(r['Quote_Reali'])
+            }
+        st.session_state.total_budget = float(df['Total_Budget'].iloc[0]) if not df.empty else 1000.0
+    except:
+        pass
 
 # --- CSS ESTETICA ---
 st.markdown("""
@@ -21,12 +45,6 @@ st.markdown("""
     .acc-tag { background-color: #1a73e8; }
     .dist-tag { background-color: #f29900; }
     .real-status { color: #2e7d32; font-size: 0.75rem; font-weight: 600; margin-top: 3px; }
-    .just-link-btn { 
-        display: inline-block; margin-top: 5px; padding: 3px 12px; 
-        background-color: #1a73e8; color: white !important; 
-        text-decoration: none !important; border-radius: 4px; 
-        font-size: 0.7rem; font-weight: 700; text-align: center;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -34,8 +52,7 @@ st.markdown("""
 def detect_policy(inf, nome):
     yield_val = inf.get('dividendYield') or inf.get('trailingAnnualDividendYield') or 0
     if yield_val > 0: return "Dist"
-    nome_lower = nome.lower()
-    if "dist" in nome_lower: return "Dist"
+    if "dist" in nome.lower(): return "Dist"
     return "Acc"
 
 def get_exchange_rate(ticker_currency):
@@ -48,7 +65,8 @@ def get_exchange_rate(ticker_currency):
 
 def update_all_prices():
     if not st.session_state.portfolio: return
-    with st.spinner("Aggiornamento automatico prezzi..."):
+    # Usiamo un placeholder per non bloccare l'interfaccia
+    with st.spinner("Aggiornamento prezzi in corso..."):
         for ticker in list(st.session_state.portfolio.keys()):
             try:
                 y_obj = yf.Ticker(ticker)
@@ -60,37 +78,9 @@ def update_all_prices():
                     st.session_state.portfolio[ticker]['Politica'] = detect_policy(inf, st.session_state.portfolio[ticker]['Nome'])
             except: continue
         st.session_state.last_update = time.time()
-        st.toast("✅ Dati aggiornati!")
-
-def save_data():
-    data = []
-    for k, v in st.session_state.portfolio.items():
-        row = {'Ticker': k, 'Total_Budget': st.session_state.total_budget}
-        row.update(v)
-        data.append(row)
-    pd.DataFrame(data).to_csv(DB_FILE, index=False)
-
-# --- INIZIALIZZAZIONE ---
-if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = {}
-    st.session_state.last_update = 0
-    if os.path.exists(DB_FILE):
-        df = pd.read_csv(DB_FILE).fillna("")
-        for _, r in df.iterrows():
-            st.session_state.portfolio[r['Ticker']] = {
-                'Nome': r['Nome'], 'ISIN': r['ISIN'], 'Politica': r['Politica'],
-                'TER': r['TER'], 'Peso': float(r['Peso']), 'Prezzo': float(r['Prezzo']),
-                'PrevClose': float(r.get('PrevClose', r['Prezzo'])), 'Valuta': r['Valuta'],
-                'Cambio': float(r['Cambio']), 'Investito_Reale': float(r['Investito_Reale']),
-                'Quote_Reali': float(r['Quote_Reali'])
-            }
-        st.session_state.total_budget = df['Total_Budget'].iloc[0] if not df.empty else 1000.0
-
-if 'total_budget' not in st.session_state: st.session_state.total_budget = 1000.0
 
 # --- LOGICA AGGIORNAMENTO AUTOMATICO ---
-current_time = time.time()
-if current_time - st.session_state.last_update > UPDATE_INTERVAL:
+if (time.time() - st.session_state.last_update) > UPDATE_INTERVAL:
     update_all_prices()
 
 # --- SIDEBAR ---
@@ -116,21 +106,27 @@ with st.sidebar.expander("➕ Aggiungi ETF"):
         except: st.error("Ticker non valido")
 
 if st.sidebar.button("💾 Salva Portafoglio", use_container_width=True):
-    save_data()
+    # Salvataggio
+    data = []
+    for k, v in st.session_state.portfolio.items():
+        row = {'Ticker': k, 'Total_Budget': st.session_state.total_budget}
+        row.update(v)
+        data.append(row)
+    pd.DataFrame(data).to_csv(DB_FILE, index=False)
     st.sidebar.success("Salvato!")
 
 if st.sidebar.button("🔄 Forza Aggiornamento", use_container_width=True):
     update_all_prices()
     st.rerun()
 
-# --- MAIN ---
+# --- MAIN INTERFACE ---
 st.title("💰 ETF PAC Planner")
 
 if not st.session_state.portfolio:
     st.info("Aggiungi un ETF dal menu a sinistra per iniziare.")
 else:
     # Tabella
-    h = st.columns([2.5, 0.6, 0.8, 0.8, 1, 1, 1.2]) # Allargata colonna azioni
+    h = st.columns([2.5, 0.6, 0.8, 0.8, 1, 1, 1.2])
     headers = ["Asset", "Tipo", "Prezzo €", "Peso %", "Mensile €", "Drift", "Azioni"]
     for col, text in zip(h, headers): col.write(f"**{text}**")
 
@@ -165,21 +161,16 @@ else:
             else: st.write("-")
 
         with c7:
-            # AZIONI: Più, Meno, Cestino
             act1, act2, act3 = st.columns(3)
-            if act1.button("➕", key=f"add_{ticker}", help="Registra acquisto"):
+            if act1.button("➕", key=f"add_{ticker}"):
                 asset['Investito_Reale'] += target_eur
                 asset['Quote_Reali'] += (target_eur / p_eur) if p_eur > 0 else 0
                 st.rerun()
-            
-            if act2.button("➖", key=f"sub_{ticker}", help="Storna acquisto"):
+            if act2.button("➖", key=f"sub_{ticker}"):
                 if asset['Investito_Reale'] >= target_eur:
                     asset['Investito_Reale'] -= target_eur
                     asset['Quote_Reali'] = max(0, asset['Quote_Reali'] - (target_eur / p_eur))
                     st.rerun()
-                else:
-                    st.toast("Impossibile stornare: capitale insufficiente")
-            
             if act3.button("🗑️", key=f"del_{ticker}"):
                 del st.session_state.portfolio[ticker]
                 st.rerun()
@@ -188,11 +179,11 @@ else:
     st.markdown("---")
     tot_investito = sum(a['Investito_Reale'] for a in st.session_state.portfolio.values())
     m1, m2, m3 = st.columns(3)
-    m1.metric("Totale Investito Reale", f"{tot_investito:,.2f} €")
-    m2.metric("Valore Attuale Portafoglio", f"{total_val:,.2f} €")
-    m3.metric("P&L Totale", f"{total_val - tot_investito:,.2f} €", f"{((total_val/tot_investito)-1)*100 if tot_investito>0 else 0:+.2f}%")
+    m1.metric("Capitale Versato", f"{tot_investito:,.2f} €")
+    m2.metric("Valore Attuale", f"{total_val:,.2f} €")
+    m3.metric("Profit/Loss", f"{total_val - tot_investito:,.2f} €", f"{((total_val/tot_investito)-1)*100 if tot_investito>0 else 0:+.2f}%")
 
-    # Grafico Storico
+    # Grafico Performance
     if st.session_state.portfolio:
         tickers = list(st.session_state.portfolio.keys())
         try:
@@ -207,14 +198,9 @@ else:
                 fig.add_trace(go.Scatter(x=pac_line.index, y=pac_line, name="⭐ IL TUO PAC", line=dict(color='red', width=4)))
             for t in tickers:
                 fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=1.5), opacity=0.6))
-            fig.update_layout(template="plotly_white", height=400, margin=dict(l=0, r=0, t=20, b=0))
+            fig.update_layout(template="plotly_white", height=400, margin=dict(l=0, r=0, t=20, b=0), legend=dict(orientation="h", y=-0.2))
             st.plotly_chart(fig, use_container_width=True)
-        except: pass
+        except:
+            pass
 
-    # Sezione Budget
-    if total_val > 0:
-        st.markdown("---")
-        ratio = tot_investito / st.session_state.total_budget if st.session_state.total_budget > 0 else 0
-        st.write(f"💰 Hai accumulato capitale pari a **{ratio:.1f} mensilità** del tuo budget PAC.")
-
-st.caption(f"Ultimo aggiornamento automatico: {time.strftime('%H:%M:%S', time.localtime(st.session_state.last_update))}")
+st.sidebar.markdown(f"**Ultimo agg:** {time.strftime('%H:%M:%S', time.localtime(st.session_state.last_update))}")
