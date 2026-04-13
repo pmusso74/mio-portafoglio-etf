@@ -78,11 +78,11 @@ if (time.time() - st.session_state.last_update) > UPDATE_INTERVAL:
 
 # --- SIDEBAR ---
 st.sidebar.header("📊 Configurazione")
-st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", value=float(st.session_state.total_budget), step=50.0, help="La cifra che investi ogni mese.")
+st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", value=float(st.session_state.total_budget), step=50.0)
 
 with st.sidebar.expander("➕ Aggiungi ETF", expanded=True):
-    new_t = st.text_input("Ticker Yahoo (es. SWDA.MI)", help="Cerca su Yahoo Finance (es. VUSA.MI, CSSX5.MI)").strip().upper()
-    if st.button("Aggiungi Asset", help="Inserisce l'ETF nella tabella"):
+    new_t = st.text_input("Ticker Yahoo (es. SWDA.MI)").strip().upper()
+    if st.button("Aggiungi Asset"):
         try:
             y = yf.Ticker(new_t); i = y.info; n = i.get('shortName', new_t)
             st.session_state.portfolio[new_t] = {
@@ -96,11 +96,11 @@ with st.sidebar.expander("➕ Aggiungi ETF", expanded=True):
         except: st.error("Non trovato")
 
 st.sidebar.markdown("---")
-if st.sidebar.button("💾 SALVA DATI", use_container_width=True, help="Salva pesi e quote sul tuo computer"):
+if st.sidebar.button("💾 SALVA DATI", use_container_width=True):
     pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()]).to_csv(DB_FILE, index=False)
     st.sidebar.success("Salvato!")
 
-if st.sidebar.button("🔄 AGGIORNA ORA", use_container_width=True, help="Scarica i prezzi attuali"):
+if st.sidebar.button("🔄 AGGIORNA ORA", use_container_width=True):
     update_all_prices(); st.rerun()
 
 # --- MAIN ---
@@ -110,65 +110,70 @@ if not st.session_state.portfolio:
     st.info("Aggiungi un ETF dalla barra laterale per iniziare.")
 else:
     # Tabella
-    h = st.columns([2.5, 0.6, 0.8, 0.8, 1, 1, 1.2])
-    for col, text in zip(h, ["Asset", "Tipo", "Prezzo €", "Peso %", "Mensile €", "Drift", "Azioni"]): col.write(f"**{text}**")
+    h = st.columns([2.2, 0.6, 0.7, 0.7, 0.9, 0.9, 0.7, 1.2])
+    labels = ["Asset", "Tipo", "Prezzo €", "Peso %", "Mensile €", "Settim. €", "Drift", "Azioni"]
+    for col, text in zip(h, labels): col.write(f"**{text}**")
 
     total_val_portafoglio = sum(a['Quote_Reali'] * a['Prezzo'] * a['Cambio'] for a in st.session_state.portfolio.values())
     
     for ticker, asset in list(st.session_state.portfolio.items()):
         p_eur = asset['Prezzo'] * asset['Cambio']
         target_eur = (asset['Peso'] / 100) * st.session_state.total_budget
+        target_settimanale = target_eur / 4.33
         v_attuale = asset['Quote_Reali'] * p_eur
         
-        c1, c2, c3, c4, c5, c6, c7 = st.columns([2.5, 0.6, 0.8, 0.8, 1, 1, 1.2])
+        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2.2, 0.6, 0.7, 0.7, 0.9, 0.9, 0.7, 1.2])
         with c2: st.markdown(f"<span class='tipo-tag {'acc-tag' if asset['Politica']=='Acc' else 'dist-tag'}'>{asset['Politica']}</span>", unsafe_allow_html=True)
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:35]}</div><div class='ticker-label'>{ticker}</div>", unsafe_allow_html=True)
             if v_attuale > 0: st.markdown(f"<div class='real-status'>Valore: {v_attuale:,.2f}€</div>", unsafe_allow_html=True)
             
-            # --- FIX LOGICA JUSTETF ---
+            # --- LOGICA JUSTETF ---
             isin_to_use = asset.get('ISIN', '')
-            # Se l'ISIN è mancante o non è nel formato corretto, usa il ticker per la ricerca
             if not isin_to_use or len(str(isin_to_use)) < 10 or isin_to_use == "-":
-                clean_ticker = ticker.split('.')[0] # Rimuove .MI o .DE
-                just_etf_url = f"https://www.justetf.com/it/find-etf.html?query={clean_ticker}"
+                just_etf_url = f"https://www.justetf.com/it/find-etf.html?query={ticker.split('.')[0]}"
             else:
                 just_etf_url = f"https://www.justetf.com/it/etf-profile.html?isin={isin_to_use}"
-            
             st.markdown(f"<a href='{just_etf_url}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
 
         c3.write(f"{p_eur:,.2f}")
-        asset['Peso'] = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed", help="Percentuale del budget mensile da destinare a questo ETF")
-        c5.write(f"**{target_eur:,.2f} €**")
-        with c6:
+        asset['Peso'] = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
+        
+        c5.write(f"**{target_eur:,.2f}**")
+        c6.write(f"{target_settimanale:,.2f}")
+        
+        with c7:
             if total_val_portafoglio > 0:
                 drift = ((v_attuale / total_val_portafoglio) * 100) - asset['Peso']
                 st.write(f"{drift:+.1f}%")
             else: st.write("-")
 
-        with c7:
+        with c8:
             act1, act2, act3 = st.columns(3)
-            if act1.button("➕", key=f"add_{ticker}", help="REGISTRA ACQUISTO: Aggiunge la quota mensile pianificata al tuo portafoglio reale"):
+            # AGGIUNGI (Quota Mensile)
+            if act1.button("➕", key=f"add_{ticker}"):
                 asset['Investito_Reale'] += target_eur
                 asset['Quote_Reali'] += (target_eur / p_eur) if p_eur > 0 else 0
                 st.rerun()
-            if act2.button("➖", key=f"sub_{ticker}", help="STORNA ACQUISTO: Sottrae la quota mensile (utile per correggere errori)"):
+            # STORNA (Quota Mensile)
+            if act2.button("➖", key=f"sub_{ticker}"):
                 if asset['Investito_Reale'] >= target_eur:
                     asset['Investito_Reale'] -= target_eur
-                    asset['Quote_Reali'] = max(0, asset['Quote_Reali'] - (target_eur / p_eur))
+                    asset['Quote_Reali'] = max(0.0, asset['Quote_Reali'] - (target_eur / p_eur))
                     st.rerun()
-            if act3.button("🗑️", key=f"del_{ticker}", help="RIMUOVI: Elimina l'asset dal piano"):
+            # RIMUOVI ASSET
+            if act3.button("🗑️", key=f"del_{ticker}"):
                 del st.session_state.portfolio[ticker]; st.rerun()
 
     # --- METRICHE ---
     st.markdown("---")
     tot_investito_reale = sum(a['Investito_Reale'] for a in st.session_state.portfolio.values())
     m1, m2, m3 = st.columns(3)
-    m1.metric("Capitale Versato", f"{tot_investito_reale:,.2f} €", help="Euro totali effettivamente spesi per gli acquisti")
-    m2.metric("Valore Attuale", f"{total_val_portafoglio:,.2f} €", help="Valore attuale di mercato del tuo portafoglio")
+    m1.metric("Capitale Versato", f"{tot_investito_reale:,.2f} €")
+    m2.metric("Valore Attuale", f"{total_val_portafoglio:,.2f} €")
     m3.metric("Profit/Loss", f"{total_val_portafoglio - tot_investito_reale:,.2f} €", f"{((total_val_portafoglio/tot_investito_reale)-1)*100 if tot_investito_reale>0 else 0:+.2f}%")
 
-    # --- GRAFICO STORICO ---
+    # --- GRAFICI ---
     st.subheader("📈 Performance Storica (1 Anno)")
     try:
         tks = list(st.session_state.portfolio.keys())
@@ -202,11 +207,10 @@ else:
         st.markdown("<div class='budget-box'>", unsafe_allow_html=True)
         st.write("### 🏦 Riepilogo Investimento")
         st.write(f"**Capitale Totale Versato:** {tot_investito_reale:,.2f} €")
-        st.write(f"**Budget Mensile Attuale:** {st.session_state.total_budget:,.2f} €")
+        st.write(f"**Budget Mensile PAC:** {st.session_state.total_budget:,.2f} €")
         
         rapporto = tot_investito_reale / st.session_state.total_budget if st.session_state.total_budget > 0 else 0
         st.write(f"**Copertura Piano:** Hai accumulato capitale pari a **{rapporto:.1f} mensilità** di PAC.")
-        
         st.progress(min(rapporto / 24, 1.0), text="Progresso (Target 2 anni)")
         st.markdown("</div>", unsafe_allow_html=True)
 
