@@ -127,7 +127,6 @@ else:
         c1, c2, c3, c4, c5, c6, c7 = st.columns([2.5, 1.2, 0.8, 0.8, 1, 1, 1])
         
         with c2:
-            # L'ISIN viene catturato qui
             asset['ISIN'] = st.text_input("ISIN", asset['ISIN'], key=f"isin_{ticker}", label_visibility="collapsed", placeholder="Codice ISIN")
             asset['Politica'] = st.selectbox("P", ["Acc", "Dist"], index=0 if asset['Politica']=="Acc" else 1, key=f"pol_{ticker}", label_visibility="collapsed")
 
@@ -135,13 +134,11 @@ else:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:40]}</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='ticker-label'>{ticker}</div>", unsafe_allow_html=True)
             
-            # COSTRUZIONE LINK JUSTETF DINAMICO
+            # LINK JUSTETF
             if asset['ISIN'] and len(asset['ISIN']) > 5:
-                # Se l'ISIN è presente, link alla scheda profilo
                 link_url = f"https://www.justetf.com/it/etf-profile.html?isin={asset['ISIN']}"
                 st.markdown(f"<a href='{link_url}' target='_blank' class='just-link-btn'>Scheda JustETF</a>", unsafe_allow_html=True)
             else:
-                # Se manca, link alla ricerca generale
                 link_url = f"https://www.justetf.com/it/find-etf.html?query={ticker.split('.')[0]}"
                 st.markdown(f"<a href='{link_url}' target='_blank' class='just-link-missing'>Cerca su JustETF</a>", unsafe_allow_html=True)
             
@@ -175,16 +172,72 @@ else:
     m2.metric("Valore Portafoglio", f"{total_val:,.2f} €")
     m3.metric("P&L Totale", f"{total_val - tot_investito:,.2f} €", f"{((total_val/tot_investito)-1)*100 if tot_investito>0 else 0:+.2f}%")
 
-    # --- GRAFICO PERFORMANCE ---
+    # --- GRAFICO PERFORMANCE AVANZATO ---
+    st.subheader("📈 Analisi Storica Performance (1 Anno)")
     if st.session_state.portfolio:
         tickers = list(st.session_state.portfolio.keys())
         try:
+            # Download dati storici
             data = yf.download(tickers, period="1y", progress=False)['Close']
-            if len(tickers) == 1: data = data.to_frame(); data.columns = tickers
+            if len(tickers) == 1: 
+                data = data.to_frame()
+                data.columns = tickers
+            
+            # Pulizia e Normalizzazione a base 100
+            data = data.ffill()
             norm = (data / data.iloc[0]) * 100
-            fig = px.line(norm, title="Confronto Performance 1 Anno (Base 100)", labels={'value': 'Ritorno %'})
-            fig.update_layout(template="plotly_white", height=400)
-            st.plotly_chart(fig, use_container_width=True)
-        except: pass
+            
+            # Inizio creazione Grafico con Figure Objects
+            fig = go.Figure()
+            
+            # 1. Calcolo e Aggiunta Linea PAC (Somma Pesata)
+            pesi_list = []
+            for t in tickers:
+                pesi_list.append(st.session_state.portfolio[t]['Peso'])
+            
+            total_peso = sum(pesi_list)
+            if total_peso > 0:
+                # Calcoliamo la media pesata riga per riga
+                pac_line = (norm * pesi_list).sum(axis=1) / total_peso
+                
+                fig.add_trace(go.Scatter(
+                    x=pac_line.index, 
+                    y=pac_line,
+                    name="⭐ IL TUO PAC (Totale)",
+                    line=dict(color='red', width=4),
+                    zorder=10 # Porta la linea in primo piano
+                ))
 
-st.caption("Nota: Inserisci l'ISIN e premi Invio per aggiornare il link di JustETF.")
+            # 2. Aggiunta linee singoli Asset (usando i Nomi)
+            for t in tickers:
+                nome_asset = st.session_state.portfolio[t]['Nome']
+                fig.add_trace(go.Scatter(
+                    x=norm.index, 
+                    y=norm[t],
+                    name=nome_asset,
+                    line=dict(width=1.5),
+                    opacity=0.7
+                ))
+
+            fig.update_layout(
+                template="plotly_white",
+                height=500,
+                legend=dict(orientation="h", y=-0.2),
+                hovermode="x unified",
+                yaxis_title="Rendimento (Base 100)",
+                margin=dict(l=0, r=0, t=30, b=0)
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+        except Exception as e:
+            st.warning(f"Dati storici non disponibili per il grafico: {e}")
+
+    # --- ALLOCAZIONE ---
+    if total_val > 0:
+        st.markdown("---")
+        df_pie = pd.DataFrame([{'Asset': a['Nome'], 'Valore': a['Quote_Reali'] * a['Prezzo'] * a['Cambio']} for a in st.session_state.portfolio.values() if a['Quote_Reali'] > 0])
+        fig_pie = px.pie(df_pie, values='Valore', names='Asset', title="Distribuzione Reale Portafoglio", hole=0.4)
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+st.caption("Nota: La linea rossa rappresenta l'andamento del portafoglio se avessi mantenuto i pesi attuali costanti nell'ultimo anno.")
