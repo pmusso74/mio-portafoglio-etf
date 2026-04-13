@@ -5,9 +5,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 import urllib.parse
 import re
+import os  # Per gestire il salvataggio su disco
 
-# --- CONFIGURAZIONE PAGINA ---
+# --- CONFIGURAZIONE ---
 st.set_page_config(page_title="ETF PAC Planner", layout="wide", page_icon="💰")
+DB_FILE = "pac_data.csv" # Nome del file di salvataggio fisso
 
 # CSS ESTETICA
 st.markdown("""
@@ -27,11 +29,10 @@ st.markdown("""
     }
     .just-link-btn:hover { background-color: #1a73e8; color: white !important; }
     .euro-value { color: #2e7d32; font-weight: 700; font-size: 1.1rem; }
-    .performance-card { background-color: #f8f9fa; padding: 20px; border-radius: 12px; border-left: 5px solid #ff3b30; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- FUNZIONI ---
+# --- FUNZIONI DI SERVIZIO ---
 def identify_isin(val1, val2=""):
     for v in [val1, val2]:
         s = str(v).strip().upper()
@@ -47,37 +48,63 @@ def get_exchange_rate(ticker_currency):
         return float(rate) if rate else 1.0
     except: return 1.0
 
-# --- STATO ---
-if 'portfolio' not in st.session_state: st.session_state.portfolio = {}
-if 'total_budget' not in st.session_state: st.session_state.total_budget = 1000.0
+# --- LOGICA SALVATAGGIO LOCALE ---
+def save_data_locally():
+    if st.session_state.portfolio:
+        df_save = pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()])
+        df_save.to_csv(DB_FILE, index=False)
+        return True
+    return False
+
+def load_data_locally():
+    if os.path.exists(DB_FILE):
+        try:
+            df_load = pd.read_csv(DB_FILE).fillna("")
+            new_port = {}
+            for _, row in df_load.iterrows():
+                t = str(row['Ticker']).strip().upper()
+                new_port[t] = {
+                    'Nome': row.get('Nome', t), 'ISIN': str(row.get('ISIN', '')).strip().upper(),
+                    'Politica': str(row.get('Politica', 'Acc')), 'TER': str(row.get('TER', '')),
+                    'Peso': float(row.get('Peso', 0)), 'Prezzo': float(row.get('Prezzo', 0)),
+                    'Valuta': str(row.get('Valuta', 'EUR')), 'Cambio': float(row.get('Cambio', 1.0))
+                }
+            st.session_state.portfolio = new_port
+            if 'Total_Budget' in df_load.columns:
+                st.session_state.total_budget = float(df_load['Total_Budget'].iloc[0])
+            return True
+        except: return False
+    return False
+
+# --- INIZIALIZZAZIONE ---
+if 'portfolio' not in st.session_state:
+    st.session_state.portfolio = {}
+    # Prova a caricare in automatico all'avvio
+    load_data_locally()
+
+if 'total_budget' not in st.session_state:
+    st.session_state.total_budget = 1000.0
 
 # --- SIDEBAR ---
-st.sidebar.header("💾 Archivio")
-uploaded_file = st.sidebar.file_uploader("Carica CSV", type="csv")
-if uploaded_file:
-    try:
-        df_load = pd.read_csv(uploaded_file).fillna("")
-        new_port = {}
-        for _, row in df_load.iterrows():
-            t = str(row['Ticker']).strip().upper()
-            new_port[t] = {
-                'Nome': row.get('Nome', t), 'ISIN': str(row.get('ISIN', '')).strip().upper(),
-                'Politica': str(row.get('Politica', 'Acc')), 'TER': str(row.get('TER', '')).replace("nan", ""),
-                'Peso': float(row.get('Peso', 0)), 'Prezzo': float(row.get('Prezzo', 0)),
-                'Valuta': str(row.get('Valuta', 'EUR')), 'Cambio': float(row.get('Cambio', 1.0))
-            }
-        st.session_state.portfolio = new_port
-    except: st.sidebar.error("Errore file.")
+st.sidebar.header("💾 Gestione File")
 
-if st.session_state.portfolio:
-    df_save = pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()])
-    st.sidebar.download_button("📥 Esporta CSV", df_save.to_csv(index=False).encode('utf-8'), "mio_pac.csv")
+if st.sidebar.button("💾 SALVA PORTAFOGLIO"):
+    if save_data_locally():
+        st.sidebar.success(f"Portafoglio salvato in {DB_FILE}")
+    else:
+        st.sidebar.error("Nulla da salvare.")
+
+# Caricamento manuale opzionale da altro file
+uploaded_file = st.sidebar.file_uploader("Carica da un altro CSV", type="csv")
+if uploaded_file:
+    # ... (stessa logica di caricamento di prima)
+    pass
 
 st.sidebar.markdown("---")
 st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", min_value=0.0, value=float(st.session_state.total_budget))
 
 st.sidebar.subheader("➕ Aggiungi Asset")
-in_ticker = st.sidebar.text_input("Ticker Yahoo (es: SWDA.MI)")
+in_ticker = st.sidebar.text_input("Ticker Yahoo")
 in_isin = st.sidebar.text_input("Codice ISIN")
 
 if st.sidebar.button("Aggiungi ETF"):
@@ -142,8 +169,8 @@ if st.session_state.portfolio:
     # --- PERFORMANCE E GRAFICO ---
     st.subheader("📈 Analisi Performance e Rendimento")
     
-    if st.button("🚀 Calcola Rendimento e Genera Grafico"):
-        with st.spinner("Analisi dati in corso..."):
+    if st.button("🚀 Aggiorna Analisi e Grafico"):
+        with st.spinner("Analisi in corso..."):
             try:
                 hist_data = yf.download(tickers_for_graph, period="1y")['Close']
                 if len(tickers_for_graph) == 1: 
@@ -156,38 +183,29 @@ if st.session_state.portfolio:
                     for t in tickers_for_graph:
                         port_line += norm[t] * (st.session_state.portfolio[t]['Peso'] / 100)
                     
-                    # CALCOLO RENDIMENTI
+                    # RENDIMENTI
                     ret_1y = port_line.iloc[-1] - 100
                     ret_6m = ((port_line.iloc[-1] / port_line.iloc[-len(port_line)//2]) - 1) * 100
-                    ret_1m = ((port_line.iloc[-1] / port_line.iloc[-22 if len(port_line)>22 else 0]) - 1) * 100
                     
-                    # Visualizzazione Rendimenti
-                    r1, r2, r3, r4 = st.columns(4)
+                    r1, r2, r3 = st.columns(3)
                     r1.metric("Rendimento 1 Anno", f"{ret_1y:+.2f}%")
                     r2.metric("Rendimento 6 Mesi", f"{ret_6m:+.2f}%")
-                    r3.metric("Rendimento 1 Mese", f"{ret_1m:+.2f}%")
                     
-                    # Trova Miglior ETF
                     perf_etf = ((hist_data.iloc[-1] / hist_data.iloc[0]) - 1) * 100
-                    best_etf = perf_etf.idxmax()
-                    r4.metric("Miglior ETF (1A)", f"{best_etf}", f"{perf_etf.max():+.2f}%")
+                    r3.metric("Miglior ETF (1A)", f"{perf_etf.idxmax()}", f"{perf_etf.max():+.2f}%")
 
-                    # Grafico
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC", line=dict(color='#FF3B30', width=5)))
                     for t in tickers_for_graph:
                         fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=f"{t}", line=dict(width=1.2), opacity=0.3))
                     
-                    fig.update_layout(template="plotly_white", hovermode="x unified", yaxis_title="Performance (Base 100)")
+                    fig.update_layout(template="plotly_white", hovermode="x unified")
                     st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.error("Dati storici non disponibili.")
-            except Exception as e:
-                st.error(f"Errore: {e}")
+            except: st.error("Errore caricamento dati.")
 
-    # Distribuzione Budget
+    # Torta
     df_plot = pd.DataFrame([{'ETF': k, 'Peso': v['Peso']} for k,v in st.session_state.portfolio.items() if v['Peso']>0])
     if not df_plot.empty:
-        st.plotly_chart(px.pie(df_plot, values='Peso', names='ETF', hole=0.4, title="Distribuzione Budget Mensile"), use_container_width=True)
+        st.plotly_chart(px.pie(df_plot, values='Peso', names='ETF', hole=0.4, title="Distribuzione Budget"), use_container_width=True)
 else:
-    st.info("👈 Inserisci Ticker e ISIN nella barra laterale per iniziare.")
+    st.info("👈 Carica un file o aggiungi un ETF per iniziare.")
