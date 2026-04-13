@@ -35,7 +35,7 @@ st.markdown("""
     .just-link-btn:hover { background-color: #1a73e8; color: white !important; }
     
     .small-metric-label { font-size: 0.85rem; color: #5f6368; margin-bottom: 2px; }
-    .small-metric-value { font-size: 1.1rem; font-weight: 700; color: #1a1c1e; }
+    .small-metric-value { font-size: 1.5rem; font-weight: 700; color: #1a1c1e; }
 
     .euro-value { color: #2e7d32; font-weight: 700; font-size: 1.1rem; }
     .pos-ret { color: #2e7d32; font-weight: 700; }
