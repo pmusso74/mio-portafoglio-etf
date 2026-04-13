@@ -9,33 +9,38 @@ import urllib.parse
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="PAC ETF Planner", layout="wide", page_icon="💰")
 
-# CSS per pulizia visiva e link
+# CSS per pulizia e link
 st.markdown("""
     <style>
-    .etf-name { color: #1E88E5; font-weight: bold; font-size: 1.05rem; margin-bottom: 0px; }
-    .ticker-sub { color: #666; font-size: 0.85rem; margin-bottom: 5px; }
+    .etf-name { color: #1E88E5; font-weight: bold; font-size: 1.05rem; margin-bottom: 2px; }
+    .ticker-sub { color: #666; font-size: 0.85rem; margin-bottom: 8px; }
     .just-link-btn { 
         display: inline-block; 
-        padding: 4px 12px; 
+        padding: 5px 15px; 
         background-color: #FB8C00; 
         color: white !important; 
         text-decoration: none; 
-        border-radius: 4px; 
+        border-radius: 5px; 
         font-size: 0.8rem; 
         font-weight: bold;
-        margin-top: 5px;
-        margin-bottom: 5px;
     }
-    .just-link-btn:hover { background-color: #EF6C00; text-decoration: none; }
+    .just-link-btn:hover { background-color: #EF6C00; text-decoration: none; color: white !important; }
     .euro-value { color: #2e7d32; font-weight: bold; }
-    /* Nasconde etichette e pulisce input */
-    .stTextInput input { height: 30px !important; }
+    /* Rimpicciolisce gli input per farli stare in una riga */
+    .stTextInput input, .stSelectbox div div div { height: 30px !important; font-size: 0.85rem !important; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- FUNZIONI ---
+def clean_metadata(value):
+    """Rimuove N/A, None, nan e sporcizia dai testi"""
+    s = str(value).strip()
+    if s.lower() in ["n/a", "n/", "none", "nan", "null", ""]:
+        return ""
+    return s
+
 def get_justetf_metadata(isin):
-    if not isin or isin == "N/A" or isin == "None": return None
+    if not isin or isin == "": return None
     url = f"https://www.justetf.com/it/etf-profile.html?isin={isin}"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
@@ -66,29 +71,25 @@ if 'total_budget' not in st.session_state: st.session_state.total_budget = 1000.
 
 # --- SIDEBAR ---
 st.sidebar.header("💾 Archivio")
-uploaded_file = st.sidebar.file_uploader("Carica CSV", type="csv")
+uploaded_file = st.sidebar.file_uploader("Carica Portafoglio (CSV)", type="csv")
 if uploaded_file:
     try:
         df_load = pd.read_csv(uploaded_file)
         new_port = {}
         for _, row in df_load.iterrows():
             t = str(row['Ticker'])
-            # Pulizia automatica dei "N/A" dal file caricato
-            isin_raw = str(row.get('ISIN', ''))
-            isin_clean = "" if isin_raw in ["N/A", "n/a", "None", "nan"] else isin_raw
-            
             new_port[t] = {
-                'Nome': row.get('Nome', t), 
-                'ISIN': isin_clean,
-                'Politica': str(row.get('Politica', 'Acc')), 
-                'TER': str(row.get('TER', '0.20%')),
-                'Peso': float(row.get('Peso', 0)), 
+                'Nome': row.get('Nome', t),
+                'ISIN': clean_metadata(row.get('ISIN', '')),
+                'Politica': str(row.get('Politica', 'Acc')),
+                'TER': clean_metadata(row.get('TER', '0.20%')),
+                'Peso': float(row.get('Peso', 0)),
                 'Prezzo': float(row.get('Prezzo', 0)),
-                'Valuta': row.get('Valuta', 'EUR'), 
+                'Valuta': row.get('Valuta', 'EUR'),
                 'Cambio': float(row.get('Cambio', 1.0))
             }
         st.session_state.portfolio = new_port
-    except: st.sidebar.error("Errore lettura file.")
+    except: st.sidebar.error("Errore caricamento.")
 
 if st.session_state.portfolio:
     df_save = pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()])
@@ -103,19 +104,18 @@ if st.sidebar.button("Aggiungi"):
     if new_ticker:
         t_up = new_ticker.upper().strip()
         try:
-            with st.spinner("Recupero dati..."):
+            with st.spinner("Analisi dati..."):
                 y_info = yf.Ticker(t_up).info
-                isin_raw = y_info.get('isin', '')
-                isin = "" if isin_raw in [None, "None", "N/A"] else isin_raw
+                isin = clean_metadata(y_info.get('isin', ''))
                 just_data = get_justetf_metadata(isin)
                 st.session_state.portfolio[t_up] = {
-                    'Nome': y_info.get('longName', t_up), 
+                    'Nome': y_info.get('longName', t_up),
                     'ISIN': isin,
-                    'Politica': just_data['Politica'] if just_data else ('Dist' if y_info.get('dividendYield') else 'Acc'),
-                    'TER': just_data['TER'] if just_data else '0.20%', 
+                    'Politica': just_data['Politica'] if just_data else ('Dist' if y_info.get('dividendYield', 0) > 0 else 'Acc'),
+                    'TER': just_data['TER'] if just_data else '0.20%',
                     'Peso': 0.0,
                     'Prezzo': float(y_info.get('currentPrice') or y_info.get('previousClose') or 0),
-                    'Valuta': y_info.get('currency', 'EUR'), 
+                    'Valuta': y_info.get('currency', 'EUR'),
                     'Cambio': get_exchange_rate(y_info.get('currency', 'EUR'))
                 }
                 st.rerun()
@@ -125,49 +125,43 @@ if st.sidebar.button("Aggiungi"):
 st.title("💰 ETF PAC Planner")
 
 if st.session_state.portfolio:
-    cols = st.columns([3.2, 1.2, 1.0, 1.0, 1.3, 1.3, 0.4])
-    header_labels = ["Dati ETF / JustETF", "Policy / TER", "Prezzo €", "Peso %", "Investimento", "Quote", ""]
-    for col, lab in zip(cols, header_labels): col.write(f"**{lab}**")
+    # Tabella con colonne ottimizzate
+    cols = st.columns([3.5, 1.2, 1.0, 1.0, 1.3, 1.3, 0.4])
+    for col, lab in zip(cols, ["Dati ETF / JustETF", "Policy / TER", "Prezzo €", "Peso %", "Investimento", "Quote", ""]):
+        col.write(f"**{lab}**")
 
     tot_w = 0
     for ticker, asset in st.session_state.portfolio.items():
-        c1, c2, c3, c4, c5, c6, c7 = st.columns([3.2, 1.2, 1.0, 1.0, 1.3, 1.3, 0.4])
+        c1, c2, c3, c4, c5, c6, c7 = st.columns([3.5, 1.2, 1.0, 1.0, 1.3, 1.3, 0.4])
         
-        # 1. NOME E LINK JUSTETF (Senza N/A)
+        # 1. NOME E BOTTONE JUSTETF (Link pulito)
         with c1:
-            st.markdown(f"<div class='etf-name'>{asset['Nome'][:55]}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='etf-name'>{asset['Nome'][:60]}</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='ticker-sub'>{ticker}</div>", unsafe_allow_html=True)
             
-            # Gestione del link
-            isin = asset.get('ISIN', '').strip()
-            if isin and isin != "":
-                # Se abbiamo l'ISIN, link diretto alla scheda
-                just_url = f"https://www.justetf.com/it/etf-profile.html?isin={isin}"
-                label = f"🔗 Scheda JustETF ({isin})"
+            isin = asset.get('ISIN', '')
+            if isin != "":
+                url = f"https://www.justetf.com/it/etf-profile.html?isin={isin}"
+                btn_label = f"🔗 Vai su JustETF ({isin})"
             else:
-                # Se manca l'ISIN, link alla ricerca per nome
                 search_term = urllib.parse.quote(asset['Nome'])
-                just_url = f"https://www.justetf.com/it/find-etf.html?query={search_term}"
-                label = "🔍 Cerca su JustETF"
+                url = f"https://www.justetf.com/it/find-etf.html?query={search_term}"
+                btn_label = "🔍 Cerca su JustETF"
             
-            st.markdown(f"<a href='{just_url}' target='_blank' class='just-link-btn'>{label}</a>", unsafe_allow_html=True)
-            
-            # Campo ISIN vuoto se non c'è, pronto per l'inserimento
-            new_isin = st.text_input("Aggiorna ISIN", asset.get('ISIN', ''), key=f"isin_{ticker}", label_visibility="collapsed", placeholder="Incolla ISIN qui...")
-            st.session_state.portfolio[ticker]['ISIN'] = new_isin
+            st.markdown(f"<a href='{url}' target='_blank' class='just-link-btn'>{btn_label}</a>", unsafe_allow_html=True)
 
         # 2. POLICY / TER
         with c2:
             pol = st.selectbox("Pol", ["Acc", "Dist"], index=0 if asset['Politica']=="Acc" else 1, key=f"p_{ticker}", label_visibility="collapsed")
             st.session_state.portfolio[ticker]['Politica'] = pol
-            ter = st.text_input("TER", asset.get('TER', ''), key=f"t_{ticker}", label_visibility="collapsed", placeholder="es. 0.20%")
+            ter = st.text_input("TER", asset.get('TER', ''), key=f"t_{ticker}", label_visibility="collapsed", placeholder="TER (es. 0.2%)")
             st.session_state.portfolio[ticker]['TER'] = ter
 
         # 3. PREZZO
         p_eur = asset['Prezzo'] * asset.get('Cambio', 1.0)
         c3.write(f"**{p_eur:.2f} €**")
 
-        # 4. PESO
+        # 4. PESO %
         w = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
         st.session_state.portfolio[ticker]['Peso'] = w
         tot_w += w
@@ -180,18 +174,18 @@ if st.session_state.portfolio:
         q = inv / p_eur if p_eur > 0 else 0
         c6.write(f"**{q:.2f}**")
 
-        # 7. DELETE
+        # 7. ELIMINA
         if c7.button("🗑️", key=f"d_{ticker}"):
             del st.session_state.portfolio[ticker]
             st.rerun()
 
     st.markdown("---")
-    if tot_w != 100: st.warning(f"Allocazione budget attuale: {tot_w}%")
+    if tot_w != 100: st.warning(f"Budget allocato: {tot_w}% (deve essere 100%)")
     else: st.success("✅ Budget 100% allocato correttamente.")
     
-    # Grafico
+    # Grafico a torta
     df_plot = pd.DataFrame([{'ETF': k, 'Peso': v['Peso']} for k,v in st.session_state.portfolio.items() if v['Peso']>0])
     if not df_plot.empty:
         st.plotly_chart(px.pie(df_plot, values='Peso', names='ETF', hole=0.4), use_container_width=True)
 else:
-    st.info("👈 Inizia aggiungendo un ticker Yahoo (es. SWDA.MI) o caricando un file CSV.")
+    st.info("👈 Inizia aggiungendo un ticker Yahoo (es. SWDA.MI) dalla barra laterale.")
