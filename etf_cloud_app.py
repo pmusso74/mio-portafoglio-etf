@@ -29,6 +29,8 @@ st.markdown("""
     }
     .just-link-btn:hover { background-color: #1a73e8; color: white !important; }
     .euro-value { color: #2e7d32; font-weight: 700; font-size: 1.1rem; }
+    .pos-ret { color: #2e7d32; font-weight: 700; }
+    .neg-ret { color: #d32f2f; font-weight: 700; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -48,7 +50,6 @@ def get_exchange_rate(ticker_currency):
         return float(rate) if rate else 1.0
     except: return 1.0
 
-# --- LOGICA SALVATAGGIO ---
 def save_data_locally():
     if st.session_state.portfolio:
         df_save = pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()])
@@ -70,8 +71,7 @@ def load_data_locally():
                     'Valuta': str(row.get('Valuta', 'EUR')), 'Cambio': float(row.get('Cambio', 1.0))
                 }
             st.session_state.portfolio = new_port
-            if 'Total_Budget' in df_load.columns:
-                st.session_state.total_budget = float(df_load['Total_Budget'].iloc[0])
+            st.session_state.total_budget = float(df_load['Total_Budget'].iloc[0]) if 'Total_Budget' in df_load.columns else 1000.0
             return True
         except: return False
     return False
@@ -80,7 +80,6 @@ def load_data_locally():
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = {}
     load_data_locally()
-
 if 'total_budget' not in st.session_state:
     st.session_state.total_budget = 1000.0
 
@@ -123,7 +122,6 @@ if st.session_state.portfolio:
 
     tot_w = 0
     tickers_list = []
-    
     for ticker, asset in st.session_state.portfolio.items():
         tickers_list.append(ticker)
         c1, c2, c3, c4, c5, c6, c7 = st.columns([3.8, 1.2, 1.0, 1.0, 1.3, 1.3, 0.4])
@@ -157,7 +155,7 @@ if st.session_state.portfolio:
     # --- PERFORMANCE ---
     st.subheader("📈 Analisi Rendimento Storico (1 Anno)")
     
-    if st.button("🚀 Calcola e Visualizza Performance"):
+    if st.button("🚀 Calcola Performance"):
         with st.spinner("Analisi dati..."):
             try:
                 hist_data = yf.download(tickers_list, period="1y")['Close']
@@ -171,42 +169,42 @@ if st.session_state.portfolio:
                     for t in tickers_list:
                         port_line += norm[t] * (st.session_state.portfolio[t]['Peso'] / 100)
                     
-                    # RENDIMENTI
-                    ret_1y = port_line.iloc[-1] - 100
-                    ret_6m = ((port_line.iloc[-1] / port_line.iloc[-len(port_line)//2]) - 1) * 100
+                    ret_1y_pac = port_line.iloc[-1] - 100
                     
-                    # Calcolo Miglior ETF (usando i Nomi)
-                    perf_etf = ((hist_data.iloc[-1] / hist_data.iloc[0]) - 1) * 100
-                    best_ticker = perf_etf.idxmax()
-                    best_name = st.session_state.portfolio[best_ticker]['Nome']
-                    
-                    r1, r2, r3 = st.columns(3)
-                    r1.metric("Rendimento PAC (1A)", f"{ret_1y:+.2f}%")
-                    r2.metric("Rendimento PAC (6M)", f"{ret_6m:+.2f}%")
-                    r3.metric("Miglior Asset in Portafoglio", f"{best_name[:25]}...", f"{perf_etf.max():+.2f}%")
-
-                    # Grafico con Nomi in Legenda
+                    # Grafico
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC (Complessivo)", line=dict(color='#FF3B30', width=4)))
+                    for t in tickers_list:
+                        fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:30], line=dict(width=1.2), opacity=0.3))
+                    fig.update_layout(template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.05))
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    # --- TABELLA RENDIMENTI SINGOLI (Richiesta Utente) ---
+                    st.markdown("### 📊 Rendimento Dettagliato dei Singoli Asset")
+                    r_cols = st.columns([3, 1, 1, 1.5])
+                    labels = ["**Asset**", "**Rendimento 1A**", "**Rendimento 6M**", "**Prezzo Inizio / Fine**"]
+                    for col, label in zip(r_cols, labels): col.write(label)
                     
                     for t in tickers_list:
-                        etf_display_name = st.session_state.portfolio[t]['Nome']
-                        # Accorcia nomi troppo lunghi per la legenda
-                        if len(etf_display_name) > 30: etf_display_name = etf_display_name[:30] + "..."
+                        # Calcolo rendimenti individuali
+                        ret_1y_ind = ((hist_data[t].iloc[-1] / hist_data[t].iloc[0]) - 1) * 100
+                        ret_6m_ind = ((hist_data[t].iloc[-1] / hist_data[t].iloc[-len(hist_data)//2]) - 1) * 100
                         
-                        fig.add_trace(go.Scatter(
-                            x=norm.index, y=norm[t], 
-                            name=etf_display_name, 
-                            line=dict(width=1.2), 
-                            opacity=0.4
-                        ))
+                        c_a, c_b, c_c, c_d = st.columns([3, 1, 1, 1.5])
+                        c_a.write(f"**{st.session_state.portfolio[t]['Nome']}**")
+                        
+                        # Colore rendimento 1A
+                        color_1y = "pos-ret" if ret_1y_ind >= 0 else "neg-ret"
+                        c_b.markdown(f"<span class='{color_1y}'>{ret_1y_ind:+.2f}%</span>", unsafe_allow_html=True)
+                        
+                        # Colore rendimento 6M
+                        color_6m = "pos-ret" if ret_6m_ind >= 0 else "neg-ret"
+                        c_c.markdown(f"<span class='{color_6m}'>{ret_6m_ind:+.2f}%</span>", unsafe_allow_html=True)
+                        
+                        c_d.write(f"{hist_data[t].iloc[0]:.2f} → {hist_data[t].iloc[-1]:.2f} €")
                     
-                    fig.update_layout(template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.error("Dati non trovati.")
-            except Exception as e:
-                st.error(f"Errore: {e}")
+                else: st.error("Dati non trovati.")
+            except Exception as e: st.error(f"Errore: {e}")
 
     # Torta
     df_plot = pd.DataFrame([{'ETF': v['Nome'], 'Peso': v['Peso']} for v in st.session_state.portfolio.values() if v['Peso']>0])
