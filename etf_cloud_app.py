@@ -11,7 +11,7 @@ st.set_page_config(page_title="ETF PAC Planner Pro", layout="wide", page_icon="�
 DB_FILE = "pac_data.csv"
 UPDATE_INTERVAL = 600  # 10 minuti
 
-# --- INIZIALIZZAZIONE STATO (Cruciale per evitare l'AttributeError) ---
+# --- INIZIALIZZAZIONE STATO (Previene AttributeError) ---
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = {}
 if 'last_update' not in st.session_state:
@@ -19,7 +19,7 @@ if 'last_update' not in st.session_state:
 if 'total_budget' not in st.session_state:
     st.session_state.total_budget = 1000.0
 
-# --- CARICAMENTO DATI DA FILE (Solo al primo avvio) ---
+# --- CARICAMENTO DATI DA FILE ---
 if not st.session_state.portfolio and os.path.exists(DB_FILE):
     try:
         df = pd.read_csv(DB_FILE).fillna("")
@@ -45,6 +45,12 @@ st.markdown("""
     .acc-tag { background-color: #1a73e8; }
     .dist-tag { background-color: #f29900; }
     .real-status { color: #2e7d32; font-size: 0.75rem; font-weight: 600; margin-top: 3px; }
+    .just-link-btn { 
+        display: inline-block; margin-top: 5px; padding: 3px 12px; 
+        background-color: #1a73e8; color: white !important; 
+        text-decoration: none !important; border-radius: 4px; 
+        font-size: 0.7rem; font-weight: 700; text-align: center;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -65,7 +71,6 @@ def get_exchange_rate(ticker_currency):
 
 def update_all_prices():
     if not st.session_state.portfolio: return
-    # Usiamo un placeholder per non bloccare l'interfaccia
     with st.spinner("Aggiornamento prezzi in corso..."):
         for ticker in list(st.session_state.portfolio.keys()):
             try:
@@ -85,11 +90,16 @@ if (time.time() - st.session_state.last_update) > UPDATE_INTERVAL:
 
 # --- SIDEBAR ---
 st.sidebar.header("📊 Gestione Piano")
-st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", value=float(st.session_state.total_budget), step=50.0)
+st.session_state.total_budget = st.sidebar.number_input(
+    "Budget Mensile (€)", 
+    value=float(st.session_state.total_budget), 
+    step=50.0,
+    help="Inserisci la cifra totale che intendi investire ogni mese. Verrà suddivisa tra i vari ETF in base ai pesi %."
+)
 
-with st.sidebar.expander("➕ Aggiungi ETF"):
-    new_ticker = st.text_input("Ticker Yahoo (es. SWDA.MI)").strip().upper()
-    if st.button("Aggiungi"):
+with st.sidebar.expander("➕ Aggiungi ETF", expanded=True):
+    new_ticker = st.text_input("Ticker Yahoo (es. SWDA.MI)", help="Usa il formato di Yahoo Finance. Esempi: SWDA.MI (Milano), SXR8.DE (Xetra).")
+    if st.button("Aggiungi all'elenco", help="Cerca l'ETF e lo aggiunge alla tua tabella di pianificazione."):
         try:
             y = yf.Ticker(new_ticker)
             inf = y.info
@@ -103,27 +113,27 @@ with st.sidebar.expander("➕ Aggiungi ETF"):
                 'Investito_Reale': 0.0, 'Quote_Reali': 0.0
             }
             st.rerun()
-        except: st.error("Ticker non valido")
+        except: st.error("Ticker non trovato.")
 
-if st.sidebar.button("💾 Salva Portafoglio", use_container_width=True):
-    # Salvataggio
+st.sidebar.markdown("---")
+if st.sidebar.button("💾 SALVA PORTAFOGLIO", use_container_width=True, help="Salva permanentemente i pesi, i ticker e le quote reali possedute nel file locale."):
     data = []
     for k, v in st.session_state.portfolio.items():
         row = {'Ticker': k, 'Total_Budget': st.session_state.total_budget}
         row.update(v)
         data.append(row)
     pd.DataFrame(data).to_csv(DB_FILE, index=False)
-    st.sidebar.success("Salvato!")
+    st.sidebar.success("Dati salvati con successo!")
 
-if st.sidebar.button("🔄 Forza Aggiornamento", use_container_width=True):
+if st.sidebar.button("🔄 AGGIORNA PREZZI ORA", use_container_width=True, help="Scarica immediatamente gli ultimi prezzi di mercato e i tassi di cambio."):
     update_all_prices()
     st.rerun()
 
-# --- MAIN INTERFACE ---
+# --- INTERFACCIA PRINCIPALE ---
 st.title("💰 ETF PAC Planner")
 
 if not st.session_state.portfolio:
-    st.info("Aggiungi un ETF dal menu a sinistra per iniziare.")
+    st.info("Benvenuto! Inizia aggiungendo un ETF dal menu a sinistra.")
 else:
     # Tabella
     h = st.columns([2.5, 0.6, 0.8, 0.8, 1, 1, 1.2])
@@ -149,9 +159,19 @@ else:
             st.markdown(f"<div class='ticker-label'>{ticker}</div>", unsafe_allow_html=True)
             if v_attuale > 0:
                 st.markdown(f"<div class='real-status'>Posseduto: {v_attuale:,.2f}€</div>", unsafe_allow_html=True)
+            
+            # Link JustETF
+            if asset.get('ISIN'):
+                l_url = f"https://www.justetf.com/it/etf-profile.html?isin={asset['ISIN']}"
+                st.markdown(f"<a href='{l_url}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
 
         c3.write(f"{p_eur:,.2f}")
-        asset['Peso'] = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
+        asset['Peso'] = c4.number_input(
+            "%", 0, 100, int(asset['Peso']), 
+            key=f"w_{ticker}", 
+            label_visibility="collapsed",
+            help="Imposta la percentuale del budget mensile da destinare a questo asset."
+        )
         c5.write(f"**{target_eur:,.2f} €**")
         
         with c6:
@@ -162,45 +182,62 @@ else:
 
         with c7:
             act1, act2, act3 = st.columns(3)
-            if act1.button("➕", key=f"add_{ticker}"):
+            if act1.button("➕", key=f"add_{ticker}", help="REGISTRA ACQUISTO: Aggiunge l'importo mensile target al capitale investito e calcola le quote caricate."):
                 asset['Investito_Reale'] += target_eur
                 asset['Quote_Reali'] += (target_eur / p_eur) if p_eur > 0 else 0
                 st.rerun()
-            if act2.button("➖", key=f"sub_{ticker}"):
+            if act2.button("➖", key=f"sub_{ticker}", help="STORNA ACQUISTO: Sottrae l'importo mensile target. Utile per correggere errori di inserimento."):
                 if asset['Investito_Reale'] >= target_eur:
                     asset['Investito_Reale'] -= target_eur
                     asset['Quote_Reali'] = max(0, asset['Quote_Reali'] - (target_eur / p_eur))
                     st.rerun()
-            if act3.button("🗑️", key=f"del_{ticker}"):
+            if act3.button("🗑️", key=f"del_{ticker}", help="RIMUOVI ASSET: Elimina definitivamente questo ETF dal portafoglio."):
                 del st.session_state.portfolio[ticker]
                 st.rerun()
 
-    # --- METRICHE E GRAFICI ---
+    # --- METRICHE ---
     st.markdown("---")
     tot_investito = sum(a['Investito_Reale'] for a in st.session_state.portfolio.values())
     m1, m2, m3 = st.columns(3)
-    m1.metric("Capitale Versato", f"{tot_investito:,.2f} €")
-    m2.metric("Valore Attuale", f"{total_val:,.2f} €")
-    m3.metric("Profit/Loss", f"{total_val - tot_investito:,.2f} €", f"{((total_val/tot_investito)-1)*100 if tot_investito>0 else 0:+.2f}%")
+    m1.metric("Capitale Versato", f"{tot_investito:,.2f} €", help="Somma totale di tutti gli acquisti registrati (prezzo d'acquisto).")
+    m2.metric("Valore Attuale", f"{total_val:,.2f} €", help="Valore di mercato odierno di tutte le quote possedute.")
+    m3.metric("Profit/Loss", f"{total_val - tot_investito:,.2f} €", f"{((total_val/tot_investito)-1)*100 if tot_investito>0 else 0:+.2f}%", help="Guadagno o perdita totale (assoluto e percentuale).")
 
-    # Grafico Performance
-    if st.session_state.portfolio:
-        tickers = list(st.session_state.portfolio.keys())
-        try:
-            data = yf.download(tickers, period="1y", progress=False)['Close']
-            if len(tickers) == 1: data = data.to_frame(); data.columns = tickers
-            data = data.ffill()
-            norm = (data / data.iloc[0]) * 100
-            fig = go.Figure()
-            pesi = [st.session_state.portfolio[t]['Peso'] for t in tickers]
-            if sum(pesi) > 0:
-                pac_line = (norm * pesi).sum(axis=1) / sum(pesi)
-                fig.add_trace(go.Scatter(x=pac_line.index, y=pac_line, name="⭐ IL TUO PAC", line=dict(color='red', width=4)))
-            for t in tickers:
-                fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=1.5), opacity=0.6))
-            fig.update_layout(template="plotly_white", height=400, margin=dict(l=0, r=0, t=20, b=0), legend=dict(orientation="h", y=-0.2))
-            st.plotly_chart(fig, use_container_width=True)
-        except:
-            pass
+    # --- GRAFICI ---
+    col_graph, col_pie = st.columns([2, 1])
+
+    with col_graph:
+        st.subheader("📈 Performance 1 Anno")
+        if st.session_state.portfolio:
+            tickers = list(st.session_state.portfolio.keys())
+            try:
+                data = yf.download(tickers, period="1y", progress=False)['Close']
+                if len(tickers) == 1: data = data.to_frame(); data.columns = tickers
+                data = data.ffill()
+                norm = (data / data.iloc[0]) * 100
+                fig = go.Figure()
+                pesi = [st.session_state.portfolio[t]['Peso'] for t in tickers]
+                if sum(pesi) > 0:
+                    pac_line = (norm * pesi).sum(axis=1) / sum(pesi)
+                    fig.add_trace(go.Scatter(x=pac_line.index, y=pac_line, name="⭐ IL TUO PAC", line=dict(color='red', width=4)))
+                for t in tickers:
+                    fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=1.5), opacity=0.6))
+                fig.update_layout(template="plotly_white", height=400, margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", y=-0.2))
+                st.plotly_chart(fig, use_container_width=True)
+            except:
+                st.warning("Dati storici non disponibili per il grafico.")
+
+    with col_pie:
+        st.subheader("📊 Allocazione Reale")
+        if total_val > 0:
+            df_pie = pd.DataFrame([
+                {'Asset': a['Nome'], 'Valore': a['Quote_Reali'] * a['Prezzo'] * a['Cambio']} 
+                for a in st.session_state.portfolio.values() if a['Quote_Reali'] > 0
+            ])
+            fig_pie = px.pie(df_pie, values='Valore', names='Asset', hole=0.4)
+            fig_pie.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=400, showlegend=False)
+            st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            st.info("Registra un acquisto (tasto ➕) per visualizzare la distribuzione del portafoglio.")
 
 st.sidebar.markdown(f"**Ultimo agg:** {time.strftime('%H:%M:%S', time.localtime(st.session_state.last_update))}")
