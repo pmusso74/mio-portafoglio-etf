@@ -45,13 +45,13 @@ def get_exchange_rate(ticker_currency):
         return float(rate) if rate else 1.0
     except: return 1.0
 
-@st.cache_data(ttl=300) # Cache di 5 minuti per i dati storici
+@st.cache_data(ttl=300)
 def fetch_historical_data(tickers):
     if not tickers: return pd.DataFrame()
-    data = yf.download(tickers, period="1y", progress=False)['Close']
+    data = yf.download(list(tickers), period="1y", progress=False)['Close']
     if len(tickers) == 1:
         data = data.to_frame()
-        data.columns = tickers
+        data.columns = list(tickers)
     return data.ffill().dropna()
 
 def load_from_df(df):
@@ -145,9 +145,9 @@ if st.session_state.portfolio:
     for col, lab in zip(cols, header_labels): col.write(f"**{lab}**")
 
     tot_w = 0
-    active_tickers = []
+    all_tickers = list(st.session_state.portfolio.keys())
+    
     for ticker, asset in st.session_state.portfolio.items():
-        active_tickers.append(ticker)
         c1, c2, c3, c4, c5, c6, c7 = st.columns([3.8, 1.2, 1.0, 1.0, 1.5, 1.5, 0.5])
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome']}</div>", unsafe_allow_html=True)
@@ -172,66 +172,70 @@ if st.session_state.portfolio:
 
     st.markdown("---")
 
-    # --- ANALISI AUTOMATICA ---
+    # --- ANALISI AUTOMATICA (FILTRATA PER PESO > 0) ---
     st.subheader("📈 Performance Storica Aggiornata")
     
-    # Recupero dati (Sfrutta la cache)
+    # Identifichiamo solo i ticker con peso > 0
+    tickers_attivi = [t for t in all_tickers if st.session_state.portfolio[t]['Peso'] > 0]
+
     try:
-        data = fetch_historical_data(tuple(active_tickers)) # tuple per renderlo hashable per la cache
+        # Scarichiamo i dati per TUTTI i ticker per efficienza cache, ma lavoriamo solo con gli attivi
+        data = fetch_historical_data(tuple(all_tickers)) 
         
-        if not data.empty:
-            # Ritaratura pesi
-            tot_w_inserito = sum(st.session_state.portfolio[t]['Peso'] for t in active_tickers)
+        if not data.empty and tickers_attivi:
+            tot_w_inserito = sum(st.session_state.portfolio[t]['Peso'] for t in tickers_attivi)
 
-            if tot_w_inserito > 0:
-                norm = (data / data.iloc[0]) * 100
-                port_line = pd.Series(0.0, index=norm.index)
-                for t in active_tickers:
-                    w_relativo = st.session_state.portfolio[t]['Peso'] / tot_w_inserito
-                    port_line += norm[t] * w_relativo
-                
-                # Metriche Rendimento
-                ret_1y = port_line.iloc[-1] - 100
-                ret_6m = ((port_line.iloc[-1] / port_line.iloc[-len(port_line)//2]) - 1) * 100
-                perf_etf = ((data.iloc[-1] / data.iloc[0]) - 1) * 100
-                best_t = perf_etf.idxmax()
+            norm = (data / data.iloc[0]) * 100
+            port_line = pd.Series(0.0, index=norm.index)
+            
+            # Calcolo linea Portafoglio RITARATA
+            for t in tickers_attivi:
+                w_relativo = st.session_state.portfolio[t]['Peso'] / tot_w_inserito
+                port_line += norm[t] * w_relativo
+            
+            # Metriche Rendimento
+            ret_1y = port_line.iloc[-1] - 100
+            ret_6m = ((port_line.iloc[-1] / port_line.iloc[-len(port_line)//2]) - 1) * 100
+            
+            # Performance singoli (solo attivi)
+            perf_attivi = ((data[tickers_attivi].iloc[-1] / data[tickers_attivi].iloc[0]) - 1) * 100
+            best_t = perf_attivi.idxmax()
 
-                m1, m2, m3 = st.columns(3)
-                with m1:
-                    st.markdown(f"<div class='small-metric-label'>Rendimento PAC (1 Anno)</div><div class='small-metric-value'>{ret_1y:+.2f}%</div>", unsafe_allow_html=True)
-                with m2:
-                    st.markdown(f"<div class='small-metric-label'>Rendimento PAC (6 Mesi)</div><div class='small-metric-value'>{ret_6m:+.2f}%</div>", unsafe_allow_html=True)
-                with m3:
-                    st.markdown(f"<div class='small-metric-label'>🏆 Miglior Asset (1 Anno)</div><div class='best-asset-value'>{st.session_state.portfolio[best_t]['Nome'][:40]}</div><div class='best-asset-pct'>{perf_etf.max():+.2f}%</div>", unsafe_allow_html=True)
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                st.markdown(f"<div class='small-metric-label'>Rendimento PAC (1 Anno)</div><div class='small-metric-value'>{ret_1y:+.2f}%</div>", unsafe_allow_html=True)
+            with m2:
+                st.markdown(f"<div class='small-metric-label'>Rendimento PAC (6 Mesi)</div><div class='small-metric-value'>{ret_6m:+.2f}%</div>", unsafe_allow_html=True)
+            with m3:
+                st.markdown(f"<div class='small-metric-label'>🏆 Miglior Asset Attivo (1 Anno)</div><div class='best-asset-value'>{st.session_state.portfolio[best_t]['Nome'][:40]}</div><div class='best-asset-pct'>{perf_attivi.max():+.2f}%</div>", unsafe_allow_html=True)
 
-                # Grafico
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC", line=dict(color='#FF3B30', width=5)))
-                for t in active_tickers:
-                    fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:25], line=dict(width=2), opacity=0.8))
-                fig.update_layout(template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.15))
-                st.plotly_chart(fig, use_container_width=True)
+            # Grafico (Solo Tickers Attivi)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC", line=dict(color='#FF3B30', width=5)))
+            for t in tickers_attivi:
+                fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:25], line=dict(width=2), opacity=0.8))
+            
+            fig.update_layout(template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.15))
+            st.plotly_chart(fig, use_container_width=True)
 
-                # Dettaglio Rendimenti riga per riga
-                st.markdown("### 📋 Dettaglio Rendimenti Asset")
-                for t in active_tickers:
-                    r_1y = ((data[t].iloc[-1] / data[t].iloc[0]) - 1) * 100
-                    r_6m = ((data[t].iloc[-1] / data[t].iloc[-len(data)//2]) - 1) * 100
-                    ca, cb, cc, cd = st.columns([3, 1, 1, 2])
-                    ca.write(f"**{st.session_state.portfolio[t]['Nome']}**")
-                    cb.markdown(f"<span class='{'pos-ret' if r_1y>=0 else 'neg-ret'}'>1A: {r_1y:+.2f}%</span>", unsafe_allow_html=True)
-                    cc.markdown(f"<span class='{'pos-ret' if r_6m>=0 else 'neg-ret'}'>6M: {r_6m:+.2f}%</span>", unsafe_allow_html=True)
-                    cd.write(f"{data[t].iloc[0]:.2f}€ → {data[t].iloc[-1]:.2f}€")
-            else:
-                st.warning("Imposta una percentuale di peso (%) per attivare l'analisi.")
-        else:
-            st.info("In attesa di dati storici per gli asset selezionati...")
+            # Dettaglio Rendimenti (Solo Tickers Attivi)
+            st.markdown("### 📋 Dettaglio Rendimenti Asset Attivi")
+            for t in tickers_attivi:
+                r_1y = ((data[t].iloc[-1] / data[t].iloc[0]) - 1) * 100
+                r_6m = ((data[t].iloc[-1] / data[t].iloc[-len(data)//2]) - 1) * 100
+                ca, cb, cc, cd = st.columns([3, 1, 1, 2])
+                ca.write(f"**{st.session_state.portfolio[t]['Nome']}**")
+                cb.markdown(f"<span class='{'pos-ret' if r_1y>=0 else 'neg-ret'}'>1A: {r_1y:+.2f}%</span>", unsafe_allow_html=True)
+                cc.markdown(f"<span class='{'pos-ret' if r_6m>=0 else 'neg-ret'}'>6M: {r_6m:+.2f}%</span>", unsafe_allow_html=True)
+                cd.write(f"{data[t].iloc[0]:.2f}€ → {data[t].iloc[-1]:.2f}€")
+        elif not tickers_attivi:
+            st.warning("Imposta una percentuale di peso (%) su almeno un ETF per visualizzare l'analisi.")
     except Exception as e:
         st.error(f"Errore caricamento analisi: {e}")
 
     # Torta
     df_plot = pd.DataFrame([{'ETF': v['Nome'], 'Peso': v['Peso']} for v in st.session_state.portfolio.values() if v['Peso'] > 0])
     if not df_plot.empty:
-        st.plotly_chart(px.pie(df_plot, values='Peso', names='ETF', hole=0.4, title="Ripartizione"), use_container_width=True)
+        st.plotly_chart(px.pie(df_plot, values='Peso', names='ETF', hole=0.4, title="Ripartizione Effettiva Budget"), use_container_width=True)
 else:
     st.info("👈 Inserisci un ISIN nella barra laterale per iniziare.")
