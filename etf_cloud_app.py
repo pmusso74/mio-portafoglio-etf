@@ -64,7 +64,7 @@ st.markdown("""
         color: #5f6368 !important;
     }
     [data-testid="stMetricValue"] {
-        font-size: 1.8rem !important;
+        font-size: 1.0rem !important;
         font-weight: 800 !important;
         color: #1a1c1e !important;
     }
