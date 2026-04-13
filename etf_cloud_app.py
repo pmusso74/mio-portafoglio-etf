@@ -70,7 +70,12 @@ st.markdown("""
     .acc-tag { background-color: #1a73e8; }
     .dist-tag { background-color: #f29900; }
     .real-status { color: #2e7d32; font-size: 0.75rem; font-weight: 600; margin-top: 3px; }
-    .just-link-btn { display: inline-block; margin-top: 5px; padding: 2px 10px; background-color: #ffffff; color: #1a73e8 !important; text-decoration: none !important; border: 1px solid #1a73e8; border-radius: 4px; font-size: 0.65rem; font-weight: 700; }
+    .just-link-btn { 
+        display: inline-block; margin-top: 5px; padding: 2px 10px; 
+        background-color: #ffffff; color: #1a73e8 !important; 
+        text-decoration: none !important; border: 1px solid #1a73e8;
+        border-radius: 4px; font-size: 0.65rem; font-weight: 700;
+    }
     .timer-info { font-size: 0.75rem; color: #d32f2f; font-weight: bold; background: #fff5f5; padding: 10px; border-radius: 5px; border: 1px solid #feb2b2; text-align: center; margin-top: 10px; }
     .budget-box { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #1a73e8; }
     </style>
@@ -86,29 +91,29 @@ if uploaded_file:
 st.sidebar.markdown("---")
 st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", value=float(st.session_state.total_budget), step=50.0)
 
-# Tasti Azione laterali uguali
 col_btn1, col_btn2 = st.sidebar.columns(2)
 if col_btn1.button("💾 SALVA", use_container_width=True):
     df_save = pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()])
     df_save.to_csv(DB_FILE, index=False)
-    st.sidebar.success("Salvato su disco!")
+    st.sidebar.success("Salvato!")
 
 if col_btn2.button("🔄 AGGIORNA", use_container_width=True):
     update_all_prices()
     st.rerun()
 
-# Download Backup
 if st.session_state.portfolio:
     csv_data = pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()]).to_csv(index=False).encode('utf-8')
     st.sidebar.download_button("📥 SCARICA BACKUP", data=csv_data, file_name=f"pac_backup_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv", use_container_width=True)
 
 with st.sidebar.expander("➕ Aggiungi nuovo ETF"):
-    new_t = st.text_input("Ticker Yahoo").strip().upper()
+    new_t = st.text_input("Ticker Yahoo (es. SWDA.MI)").strip().upper()
     if st.button("Conferma", use_container_width=True):
         try:
             y = yf.Ticker(new_t); i = y.info; n = i.get('shortName', new_t)
+            # Tentativo avanzato recupero ISIN
+            isin_found = i.get('underlyingSymbol') or (y.isin if hasattr(y, 'isin') and y.isin != '-' else "")
             st.session_state.portfolio[new_t] = {
-                'Nome': n, 'ISIN': i.get('underlyingSymbol') or (y.isin if hasattr(y, 'isin') else ""),
+                'Nome': n, 'ISIN': isin_found,
                 'Politica': detect_policy(i, n), 'TER': '0.20%', 'Peso': 0.0,
                 'Prezzo': i.get('currentPrice') or i.get('regularMarketPrice'),
                 'PrevClose': i.get('previousClose', 0), 'Valuta': i.get('currency', 'EUR'),
@@ -135,7 +140,6 @@ else:
     
     for ticker, asset in list(st.session_state.portfolio.items()):
         p_eur = asset['Prezzo'] * asset['Cambio']
-        
         c1, c2, c3, c4, c5, c6, c7 = st.columns([2.5, 0.6, 0.8, 0.8, 1, 1, 1.2])
         
         with c2: st.markdown(f"<span class='tipo-tag {'acc-tag' if asset['Politica']=='Acc' else 'dist-tag'}'>{asset['Politica']}</span>", unsafe_allow_html=True)
@@ -144,13 +148,19 @@ else:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:35]}</div><div class='ticker-label'>{ticker}</div>", unsafe_allow_html=True)
             v_attuale_asset = asset['Quote_Reali'] * p_eur
             if asset['Quote_Reali'] > 0: st.markdown(f"<div class='real-status'>Posseduto: {v_attuale_asset:,.2f}€</div>", unsafe_allow_html=True)
-            if asset.get('ISIN'): st.markdown(f"<a href='https://www.justetf.com/it/etf-profile.html?isin={asset['ISIN']}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
+            
+            # LINK JUSTETF DINAMICO
+            if asset.get('ISIN') and len(str(asset['ISIN'])) > 5:
+                l_url = f"https://www.justetf.com/it/etf-profile.html?isin={asset['ISIN']}"
+                st.markdown(f"<a href='{l_url}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
+            else:
+                # Ricerca per ticker se ISIN manca
+                search_term = ticker.split('.')[0]
+                l_url = f"https://www.justetf.com/it/find-etf.html?query={search_term}"
+                st.markdown(f"<a href='{l_url}' target='_blank' class='just-link-btn' style='color:#666 !important; border-color:#666'>Cerca su JustETF ↗</a>", unsafe_allow_html=True)
 
         c3.write(f"{p_eur:,.2f}")
-        
-        # AGGIORNAMENTO PESO: Sincronizzato con la session_state
-        new_peso = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
-        asset['Peso'] = float(new_peso) # Aggiorna il dizionario immediatamente
+        asset['Peso'] = float(c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed"))
         
         target_eur = (asset['Peso'] / 100) * st.session_state.total_budget
         c5.write(f"**{target_eur:,.2f} €**")
@@ -163,31 +173,20 @@ else:
 
         with c7:
             a1, a2, a3 = st.columns(3)
-            # LOGICA PULSANTE +
-            if a1.button("➕", key=f"add_{ticker}", help="Aggiungi quota mensile"):
+            if a1.button("➕", key=f"add_{ticker}"):
                 if target_eur > 0:
                     asset['Investito_Reale'] += target_eur
                     asset['Quote_Reali'] += (target_eur / p_eur) if p_eur > 0 else 0
-                    st.toast(f"Aggiunti {target_eur:.2f}€ a {ticker}")
-                    time.sleep(0.5)
+                    st.toast(f"✅ +{target_eur:.2f}€")
                     st.rerun()
-                else:
-                    st.error("Imposta un peso % prima!")
-
-            # LOGICA PULSANTE - (ANNULLA)
-            if a2.button("➖", key=f"sub_{ticker}", help="Annulla/Storna quota mensile"):
+            if a2.button("➖", key=f"sub_{ticker}"):
                 if asset['Investito_Reale'] >= target_eur and target_eur > 0:
                     asset['Investito_Reale'] -= target_eur
                     asset['Quote_Reali'] = max(0, asset['Quote_Reali'] - (target_eur / p_eur))
-                    st.toast(f"Stornati {target_eur:.2f}€ da {ticker}")
-                    time.sleep(0.5)
+                    st.toast(f"Stornati {target_eur:.2f}€")
                     st.rerun()
-                else:
-                    st.warning("Nulla da stornare o peso a 0")
-
             if a3.button("🗑️", key=f"del_{ticker}"):
-                del st.session_state.portfolio[ticker]
-                st.rerun()
+                del st.session_state.portfolio[ticker]; st.rerun()
 
     # --- METRICHE E GRAFICI ---
     st.markdown("---")
@@ -211,7 +210,7 @@ else:
             fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=1.5), opacity=0.6))
         fig.update_layout(template="plotly_white", height=400, margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", y=-0.2))
         st.plotly_chart(fig, use_container_width=True)
-    except: st.warning("Grafico storico non disponibile.")
+    except: st.warning("Grafico non disponibile.")
 
     st.markdown("---")
     st.subheader("📊 Analisi Portafoglio Reale")
