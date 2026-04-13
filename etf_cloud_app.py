@@ -9,13 +9,14 @@ import time
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="ETF PAC Planner Pro", layout="wide", page_icon="💰")
 DB_FILE = "pac_data.csv"
-UPDATE_INTERVAL = 60  # Aggiornamento ogni 60 secondi
+# Intervallo di aggiornamento: 60 secondi (miglior compromesso prestazioni/freschezza)
+UPDATE_INTERVAL = 60 
 
 # --- INIZIALIZZAZIONE STATO ---
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = {}
 if 'last_update' not in st.session_state:
-    st.session_state.last_update = 0.0
+    st.session_state.last_update = time.time()
 if 'total_budget' not in st.session_state:
     st.session_state.total_budget = 1000.0
 
@@ -50,8 +51,7 @@ st.markdown("""
         text-decoration: none !important; border: 1px solid #1a73e8;
         border-radius: 4px; font-size: 0.65rem; font-weight: 700;
     }
-    .budget-box { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #1a73e8; }
-    .auto-refresh-text { font-size: 0.75rem; color: #2e7d32; font-weight: bold; }
+    .budget-box { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #1a73e8; margin-top: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -72,21 +72,18 @@ def update_all_prices():
         except: continue
     st.session_state.last_update = time.time()
 
-# --- LOGICA AUTO-AGGIORNAMENTO ---
-current_time = time.time()
-time_to_next = UPDATE_INTERVAL - (current_time - st.session_state.last_update)
-
-if time_to_next <= 0:
+# --- LOGICA AUTO-UPDATE (Senza sfarfallio al secondo) ---
+if (time.time() - st.session_state.last_update) > UPDATE_INTERVAL:
     update_all_prices()
     st.rerun()
 
 # --- SIDEBAR ---
 st.sidebar.header("📊 Configurazione")
-st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", value=float(st.session_state.total_budget), step=50.0, help="Inserisci la cifra totale che intendi investire ogni mese.")
+st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", value=float(st.session_state.total_budget), step=50.0, help="Cifra totale da investire ogni mese")
 
 with st.sidebar.expander("➕ Aggiungi ETF", expanded=True):
-    new_t = st.text_input("Ticker Yahoo (es. SWDA.MI)", help="Esempio: VUSA.MI (S&P500), CSSX5.MI (Eurostoxx)").strip().upper()
-    if st.button("Aggiungi Asset", help="Cerca e inserisce l'asset nel tuo piano"):
+    new_t = st.text_input("Ticker Yahoo (es. SWDA.MI)", help="Inserisci il ticker (es. VUSA.MI per S&P500)").strip().upper()
+    if st.button("Aggiungi all'elenco", help="Cerca l'ETF e lo inserisce nella tabella"):
         try:
             y = yf.Ticker(new_t); i = y.info; n = i.get('shortName', new_t)
             st.session_state.portfolio[new_t] = {
@@ -97,28 +94,26 @@ with st.sidebar.expander("➕ Aggiungi ETF", expanded=True):
                 'Cambio': 1.0, 'Investito_Reale': 0.0, 'Quote_Reali': 0.0
             }
             st.rerun()
-        except: st.error("Ticker non trovato")
+        except: st.error("Non trovato")
 
 st.sidebar.markdown("---")
-if st.sidebar.button("💾 SALVA DATI", use_container_width=True, help="Salva permanentemente i tuoi progressi e i pesi degli asset."):
+if st.sidebar.button("💾 SALVA DATI", use_container_width=True, help="Salva permanentemente i pesi e le quote nel file CSV"):
     pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()]).to_csv(DB_FILE, index=False)
     st.sidebar.success("Dati salvati!")
 
-if st.sidebar.button("🔄 AGGIORNA ORA", use_container_width=True, help="Forza l'aggiornamento immediato dei prezzi."):
-    update_all_prices(); st.rerun()
-
-st.sidebar.markdown(f"<div class='auto-refresh-text'>Aggiornamento automatico tra: {int(time_to_next)}s</div>", unsafe_allow_html=True)
+if st.sidebar.button("🔄 AGGIORNA PREZZI ORA", use_container_width=True, help="Forza l'aggiornamento dei prezzi senza aspettare il minuto"):
+    update_all_prices()
+    st.rerun()
 
 # --- MAIN ---
 st.title("💰 ETF PAC Planner Pro")
 
 if not st.session_state.portfolio:
-    st.info("👋 Benvenuto! Aggiungi il tuo primo ETF dal menu a sinistra per iniziare a pianificare.")
+    st.info("Benvenuto! Aggiungi un ETF dal menu a sinistra per iniziare.")
 else:
-    # Tabella Asset
+    # Tabella
     h = st.columns([2.5, 0.6, 0.8, 0.8, 1, 1, 1.2])
-    cols_labels = ["Asset", "Tipo", "Prezzo €", "Peso %", "Mensile €", "Drift", "Azioni"]
-    for col, text in zip(h, cols_labels): col.write(f"**{text}**")
+    for col, text in zip(h, ["Asset", "Tipo", "Prezzo €", "Peso %", "Mensile €", "Drift", "Azioni"]): col.write(f"**{text}**")
 
     total_val_portafoglio = sum(a['Quote_Reali'] * a['Prezzo'] * a['Cambio'] for a in st.session_state.portfolio.values())
     
@@ -128,20 +123,15 @@ else:
         v_attuale = asset['Quote_Reali'] * p_eur
         
         c1, c2, c3, c4, c5, c6, c7 = st.columns([2.5, 0.6, 0.8, 0.8, 1, 1, 1.2])
-        
-        with c2: 
-            st.markdown(f"<span class='tipo-tag {'acc-tag' if asset['Politica']=='Acc' else 'dist-tag'}'>{asset['Politica']}</span>", unsafe_allow_html=True)
-        
+        with c2: st.markdown(f"<span class='tipo-tag {'acc-tag' if asset['Politica']=='Acc' else 'dist-tag'}'>{asset['Politica']}</span>", unsafe_allow_html=True)
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:35]}</div><div class='ticker-label'>{ticker}</div>", unsafe_allow_html=True)
-            if v_attuale > 0: st.markdown(f"<div class='real-status'>Posseduto: {v_attuale:,.2f}€</div>", unsafe_allow_html=True)
-            if asset.get('ISIN'):
-                st.markdown(f"<a href='https://www.justetf.com/it/etf-profile.html?isin={asset['ISIN']}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
+            if v_attuale > 0: st.markdown(f"<div class='real-status'>Valore: {v_attuale:,.2f}€</div>", unsafe_allow_html=True)
+            if asset.get('ISIN'): st.markdown(f"<a href='https://www.justetf.com/it/etf-profile.html?isin={asset['ISIN']}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
 
         c3.write(f"{p_eur:,.2f}")
-        asset['Peso'] = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed", help="Percentuale di budget da destinare a questo asset")
+        asset['Peso'] = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed", help="Percentuale del budget mensile")
         c5.write(f"**{target_eur:,.2f} €**")
-        
         with c6:
             if total_val_portafoglio > 0:
                 drift = ((v_attuale / total_val_portafoglio) * 100) - asset['Peso']
@@ -150,27 +140,27 @@ else:
 
         with c7:
             act1, act2, act3 = st.columns(3)
-            if act1.button("➕", key=f"add_{ticker}", help="REGISTRA ACQUISTO: Aggiunge la quota mensile target al capitale investito."):
+            if act1.button("➕", key=f"add_{ticker}", help="REGISTRA ACQUISTO: Aggiunge la quota mensile target al posseduto"):
                 asset['Investito_Reale'] += target_eur
                 asset['Quote_Reali'] += (target_eur / p_eur) if p_eur > 0 else 0
                 st.rerun()
-            if act2.button("➖", key=f"sub_{ticker}", help="STORNA: Sottrae una quota mensile (utile per correggere errori)."):
+            if act2.button("➖", key=f"sub_{ticker}", help="STORNA: Sottrae una mensilità (correzione errori)"):
                 if asset['Investito_Reale'] >= target_eur:
                     asset['Investito_Reale'] -= target_eur
                     asset['Quote_Reali'] = max(0, asset['Quote_Reali'] - (target_eur / p_eur))
                     st.rerun()
-            if act3.button("🗑️", key=f"del_{ticker}", help="ELIMINA: Rimuove l'asset dal piano."):
+            if act3.button("🗑️", key=f"del_{ticker}", help="ELIMINA: Rimuove l'asset dal piano"):
                 del st.session_state.portfolio[ticker]; st.rerun()
 
-    # --- METRICHE GENERALI ---
+    # --- METRICHE ---
     st.markdown("---")
     tot_investito_reale = sum(a['Investito_Reale'] for a in st.session_state.portfolio.values())
     m1, m2, m3 = st.columns(3)
-    m1.metric("Capitale Versato", f"{tot_investito_reale:,.2f} €", help="Totale degli euro versati nel tempo.")
-    m2.metric("Valore Portafoglio", f"{total_val_portafoglio:,.2f} €", help="Valore attuale di mercato.")
-    m3.metric("P&L Totale", f"{total_val_portafoglio - tot_investito_reale:,.2f} €", f"{((total_val_portafoglio/tot_investito_reale)-1)*100 if tot_investito_reale>0 else 0:+.2f}%")
+    m1.metric("Capitale Versato", f"{tot_investito_reale:,.2f} €", help="Somma totale degli acquisti effettuati")
+    m2.metric("Valore Portafoglio", f"{total_val_portafoglio:,.2f} €", help="Valore attuale di mercato")
+    m3.metric("Profit/Loss", f"{total_val_portafoglio - tot_investito_reale:,.2f} €", f"{((total_val_portafoglio/tot_investito_reale)-1)*100 if tot_investito_reale>0 else 0:+.2f}%")
 
-    # --- GRAFICO STORICO ---
+    # --- GRAFICI ---
     st.subheader("📈 Performance Storica (1 Anno)")
     try:
         tks = list(st.session_state.portfolio.keys())
@@ -185,35 +175,30 @@ else:
             fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=1.5), opacity=0.6))
         fig.update_layout(template="plotly_white", height=400, margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", y=-0.2))
         st.plotly_chart(fig, use_container_width=True)
-    except: st.warning("Grafico storico non disponibile.")
+    except: st.warning("Grafico storico non disponibile")
 
-    # --- ALLOCAZIONE REALE E ANALISI BUDGET ---
     st.markdown("---")
-    st.subheader("📊 Analisi Portafoglio Reale")
-    c_pie, c_info = st.columns([1.5, 1])
     
+    # --- ALLOCAZIONE E BUDGET ---
+    c_pie, c_info = st.columns([1.5, 1])
     with c_pie:
+        st.subheader("📊 Distribuzione Reale (€)")
         if total_val_portafoglio > 0:
             df_pie = pd.DataFrame([{'Asset': a['Nome'], 'Valore': a['Quote_Reali'] * a['Prezzo'] * a['Cambio']} for a in st.session_state.portfolio.values() if a['Quote_Reali'] > 0])
             fig_p = px.pie(df_pie, values='Valore', names='Asset', hole=0.4)
             fig_p.update_traces(textinfo='percent+label', hovertemplate='<b>%{label}</b><br>Valore: %{value:,.2f} €')
-            fig_p.update_layout(height=400, margin=dict(l=10, r=10, t=10, b=10))
+            fig_p.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=350)
             st.plotly_chart(fig_p, use_container_width=True)
-        else: st.info("Registra un acquisto (tasto ➕) per vedere la composizione reale.")
+        else: st.info("Nessun acquisto registrato.")
 
     with c_info:
+        st.subheader("🏦 Riepilogo Investimento")
         st.markdown("<div class='budget-box'>", unsafe_allow_html=True)
-        st.write("### 🏦 Stato dell'Investimento")
         st.write(f"**Euro Totali Investiti:** {tot_investito_reale:,.2f} €")
         st.write(f"**Budget Mensile PAC:** {st.session_state.total_budget:,.2f} €")
-        
         mensilita = tot_investito_reale / st.session_state.total_budget if st.session_state.total_budget > 0 else 0
-        st.write(f"**Copertura:** Hai accumulato capitale pari a **{mensilita:.1f} mensilità** del tuo budget attuale.")
-        
-        st.progress(min(mensilita / 24, 1.0), text="Progresso vs Target 2 anni")
+        st.write(f"**Copertura:** Hai investito circa **{mensilita:.1f} mensilità**.")
+        st.progress(min(mensilita / 24, 1.0), text="Progresso (Target 2 anni)")
         st.markdown("</div>", unsafe_allow_html=True)
 
-# --- HEARTBEAT TIMER ---
-# Questo script forza Streamlit a ricaricare la pagina allo scadere dell'intervallo
-time.sleep(1)
-st.rerun()
+st.sidebar.caption(f"Ultimo agg: {time.strftime('%H:%M:%S', time.localtime(st.session_state.last_update))}")
