@@ -49,7 +49,7 @@ if (time.time() - st.session_state.last_update) > UPDATE_INTERVAL:
 st.markdown("""
     <style>
     .stMetric { background-color: #ffffff; padding: 10px; border-radius: 8px; border: 1px solid #eee; }
-    .etf-name { color: #1a1c1e; font-weight: 700; font-size: 0.95rem; line-height: 1.1; }
+    .etf-name { color: #1a1c1e; font-weight: 70; font-size: 0.95rem; line-height: 1.1; }
     .ticker-label { color: #666; font-family: monospace; font-size: 0.8rem; }
     .tipo-tag { padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; color: white; }
     .acc-tag { background-color: #1a73e8; }
