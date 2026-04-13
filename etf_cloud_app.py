@@ -16,7 +16,7 @@ st.markdown("""
     <style>
     .etf-name { color: #1a1c1e; font-weight: 700; font-size: 1.1rem; }
     .isin-display { color: #d32f2f; font-weight: bold; font-family: monospace; font-size: 0.9rem; margin-bottom: 5px; }
-    .real-status { color: #666; font-size: 0.8rem; font-style: italic; }
+    .real-status { color: #666; font-size: 0.85rem; font-style: italic; background: #f8f9fa; padding: 2px 5px; border-radius: 4px; border-left: 3px solid #2e7d32; }
     .search-container { background-color: #f0f7ff; padding: 15px; border-radius: 10px; border: 1px solid #1a73e8; margin-bottom: 20px; }
     .just-link-btn { 
         display: inline-block; margin-top: 8px; padding: 6px 18px; 
@@ -32,7 +32,6 @@ st.markdown("""
     .neg-ret { color: #d32f2f; font-weight: 700; }
     .small-metric-label { font-size: 0.9rem; color: #5f6368; font-weight: 500; }
     .small-metric-value { font-size: 1.25rem; font-weight: 800; color: #1a1c1e; }
-    .stButton button { width: 100%; padding: 2px 5px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -48,19 +47,17 @@ def get_exchange_rate(ticker_currency):
 
 def update_all_prices():
     if not st.session_state.portfolio: return
-    with st.spinner("Aggiornamento dati di borsa..."):
+    with st.spinner("Aggiornamento prezzi..."):
         for ticker in st.session_state.portfolio:
             try:
                 y_obj = yf.Ticker(ticker)
                 inf = y_obj.info
-                new_price = inf.get('currentPrice') or inf.get('regularMarketPrice') or inf.get('previousClose')
-                prev_close = inf.get('previousClose')
-                if new_price: st.session_state.portfolio[ticker]['Prezzo'] = float(new_price)
-                if prev_close: st.session_state.portfolio[ticker]['PrevClose'] = float(prev_close)
-                curr = st.session_state.portfolio[ticker]['Valuta']
-                st.session_state.portfolio[ticker]['Cambio'] = get_exchange_rate(curr)
+                new_p = inf.get('currentPrice') or inf.get('regularMarketPrice') or inf.get('previousClose')
+                if new_p: st.session_state.portfolio[ticker]['Prezzo'] = float(new_p)
+                if inf.get('previousClose'): st.session_state.portfolio[ticker]['PrevClose'] = float(inf.get('previousClose'))
+                st.session_state.portfolio[ticker]['Cambio'] = get_exchange_rate(st.session_state.portfolio[ticker]['Valuta'])
             except: continue
-        st.toast("✅ Prezzi aggiornati!")
+        st.toast("✅ Dati aggiornati!")
 
 def load_from_df(df):
     df = df.fillna(0)
@@ -104,13 +101,12 @@ if 'total_budget' not in st.session_state: st.session_state.total_budget = 1000.
 # --- SIDEBAR ---
 st.sidebar.title("📁 Gestione Portafoglio")
 cs1, cs2 = st.sidebar.columns(2)
-if cs1.button("💾 SALVA"):
+if cs1.button("💾 SALVA", help="Salva piano e quote reali"):
     if save_data_locally(): st.sidebar.success("Salvato!")
-if cs2.button("🔄 AGGIORNA"):
+if cs2.button("🔄 AGGIORNA", help="Aggiorna prezzi ora"):
     update_all_prices()
     st.rerun()
 
-st.sidebar.markdown("---")
 uploaded_file = st.sidebar.file_uploader("📥 Carica CSV", type="csv")
 if uploaded_file:
     load_from_df(pd.read_csv(uploaded_file))
@@ -120,12 +116,11 @@ st.sidebar.markdown("---")
 st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", min_value=0.0, value=float(st.session_state.total_budget), step=50.0)
 
 st.sidebar.markdown("<div class='search-container'>", unsafe_allow_html=True)
-st.sidebar.subheader("🔍 Aggiungi ETF")
 target_isin = st.sidebar.text_input("Inserisci ISIN").strip().upper()
 if st.sidebar.button("CERCA E AGGIUNGI"):
     if target_isin:
         try:
-            with st.spinner("Analisi..."):
+            with st.spinner("Ricerca..."):
                 y_obj = yf.Ticker(target_isin)
                 inf = y_obj.info
                 st.session_state.portfolio[y_obj.ticker] = {
@@ -152,18 +147,23 @@ if st.session_state.portfolio:
     all_tickers = list(st.session_state.portfolio.keys())
 
     for ticker, asset in st.session_state.portfolio.items():
-        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2.5, 0.9, 0.8, 0.7, 1.0, 1.0, 0.8, 1.0])
+        if 'Investito_Reale' not in asset: asset['Investito_Reale'] = 0.0
+        if 'Quote_Reali' not in asset: asset['Quote_Reali'] = 0.0
+
         p_eur = asset['Prezzo'] * asset.get('Cambio', 1.0)
         inv_m = (asset['Peso'] / 100) * st.session_state.total_budget
         inv_w = inv_m / 4.33
-        val_attuale = asset.get('Quote_Reali', 0.0) * p_eur
-        total_invested_all += asset.get('Investito_Reale', 0.0)
-        current_value_all += val_attuale
+        
+        val_attuale_asset = asset['Quote_Reali'] * p_eur
+        total_invested_all += asset['Investito_Reale']
+        current_value_all += val_attuale_asset
 
+        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2.5, 0.9, 0.8, 0.7, 1.0, 1.0, 0.8, 1.0])
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:40]}</div><div class='isin-display'>{asset['ISIN']}</div>", unsafe_allow_html=True)
-            if asset.get('Investito_Reale', 0) > 0:
-                st.markdown(f"<div class='real-status'>Reale: {val_attuale:,.2f}€ ({(val_attuale-asset['Investito_Reale']):+,.2f}€)</div>", unsafe_allow_html=True)
+            if asset['Investito_Reale'] > 0:
+                diff = val_attuale_asset - asset['Investito_Reale']
+                st.markdown(f"<div class='real-status'>Posseduto: {val_attuale_asset:,.2f}€ ({(diff):+,.2f}€)</div>", unsafe_allow_html=True)
             st.markdown(f"<a href='https://www.justetf.com/it/etf-profile.html?isin={asset['ISIN']}' target='_blank' class='just-link-btn'>JustETF</a>", unsafe_allow_html=True)
 
         with c2:
@@ -179,16 +179,32 @@ if st.session_state.portfolio:
 
         with c8:
             act = st.columns(3)
-            if act[0].button("➕", key=f"b_{ticker}"):
-                asset['Investito_Reale'] = asset.get('Investito_Reale', 0.0) + inv_w
-                asset['Quote_Reali'] = asset.get('Quote_Reali', 0.0) + (inv_w / p_eur)
+            if act[0].button("➕", key=f"b_{ticker}", help="Registra acquisto settimanale"):
+                asset['Investito_Reale'] += inv_w
+                asset['Quote_Reali'] += (inv_w / p_eur) if p_eur > 0 else 0
                 st.rerun()
-            if act[1].button("➖", key=f"r_{ticker}"):
-                asset['Investito_Reale'] = max(0.0, asset.get('Investito_Reale', 0.0) - inv_w)
-                asset['Quote_Reali'] = max(0.0, asset.get('Quote_Reali', 0.0) - (inv_w / p_eur))
-                st.rerun()
+            if act[1].button("➖", key=f"r_{ticker}", help="Storna ultima quota"):
+                if asset['Investito_Reale'] >= inv_w:
+                    asset['Investito_Reale'] -= inv_w
+                    asset['Quote_Reali'] = max(0.0, asset['Quote_Reali'] - (inv_w / p_eur))
+                    st.rerun()
             if act[2].button("🗑️", key=f"d_{ticker}"):
                 del st.session_state.portfolio[ticker]; st.rerun()
+
+    st.markdown("---")
+
+    # --- RIEPILOGO REALE ---
+    if total_invested_all > 0:
+        st.subheader("🏦 Stato Portafoglio Reale")
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("Capitale Versato", f"{total_invested_all:,.2f} €")
+        r2.metric("Valore Attuale", f"{current_value_all:,.2f} €")
+        r3.metric("Profit & Loss", f"{(current_value_all - total_invested_all):+,.2f} €", f"{((current_value_all/total_invested_all)-1)*100:+.2f}%")
+        if r4.button("🧹 Reset Dati Reali"):
+            for t in st.session_state.portfolio:
+                st.session_state.portfolio[t]['Investito_Reale'] = 0.0
+                st.session_state.portfolio[t]['Quote_Reali'] = 0.0
+            st.rerun()
 
     # --- ANALISI STORICA E ODIERNA ---
     active_tickers = [t for t in all_tickers if st.session_state.portfolio[t]['Peso'] > 0]
@@ -202,42 +218,40 @@ if st.session_state.portfolio:
                 for t in active_tickers:
                     port_line += norm[t] * (st.session_state.portfolio[t]['Peso'] / tot_w_ins)
                 
-                # Calcolo Performance Odierna
+                # Calcolo oggi
                 today_data = []
                 pac_today_ret = 0
                 for t in active_tickers:
                     asset = st.session_state.portfolio[t]
-                    # Calcolo variazione % di oggi
                     change = ((asset['Prezzo'] / asset['PrevClose']) - 1) * 100 if asset.get('PrevClose', 0) > 0 else 0
                     today_data.append({'Asset': asset['Nome'][:30], 'Variazione %': change})
                     pac_today_ret += change * (asset['Peso'] / tot_w_ins)
-                
                 today_data.append({'Asset': '⭐ IL TUO PAC (TOTALE)', 'Variazione %': pac_today_ret})
-                df_today = pd.DataFrame(today_data)
 
-                # Metriche Small
-                st.markdown("---")
                 m1, m2, m3 = st.columns(3)
                 m1.markdown(f"<div class='small-metric-label'>Rendimento 1 Anno</div><div class='small-metric-value'>{port_line.iloc[-1]-100:+.2f}%</div>", unsafe_allow_html=True)
                 m2.markdown(f"<div class='small-metric-label'>Rendimento 6 Mesi</div><div class='small-metric-value'>{((port_line.iloc[-1]/port_line.iloc[-len(port_line)//2])-1)*100:+.2f}%</div>", unsafe_allow_html=True)
-                m3.markdown(f"<div class='small-metric-label'>Variazione di Oggi</div><div class='small-metric-value' style='color:{'#2e7d32' if pac_today_ret>=0 else '#d32f2f'}'>{pac_today_ret:+.2f}%</div>", unsafe_allow_html=True)
+                m3.markdown(f"<div class='small-metric-label'>Variazione Oggi</div><div class='small-metric-value' style='color:{'#2e7d32' if pac_today_ret>=0 else '#d32f2f'}'>{pac_today_ret:+.2f}%</div>", unsafe_allow_html=True)
 
-                # GRAFICO 1: STORICO
                 fig1 = go.Figure()
                 fig1.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC", line=dict(color='#FF3B30', width=5)))
                 for t in active_tickers:
-                    fig1.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=1.5), opacity=0.7))
+                    fig1.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=1.5), opacity=0.8))
                 fig1.update_layout(title="Andamento Storico 1 Anno", template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.1))
                 st.plotly_chart(fig1, use_container_width=True)
 
-                # GRAFICO 2: PERFORMANCE DI OGGI (RICHIESTA UTENTE)
-                st.subheader("📊 Performance di Oggi")
-                fig2 = px.bar(df_today, x='Variazione %', y='Asset', orientation='h', 
-                             color='Variazione %', color_continuous_scale='RdYlGn',
-                             range_color=[-2, 2], text_auto='.2f')
+                st.subheader("📊 Performance Odierna")
+                fig2 = px.bar(pd.DataFrame(today_data), x='Variazione %', y='Asset', orientation='h', color='Variazione %', color_continuous_scale='RdYlGn', range_color=[-2, 2], text_auto='.2f')
                 fig2.update_layout(template="plotly_white", showlegend=False, height=300)
                 st.plotly_chart(fig2, use_container_width=True)
 
-        except Exception as e: st.error(f"Errore: {e}")
+                for t in active_tickers:
+                    r1a, r6m = ((data[t].iloc[-1]/data[t].iloc[0])-1)*100, ((data[t].iloc[-1]/data[t].iloc[-len(data)//2])-1)*100
+                    ca, cb, cc, cd = st.columns([3, 1, 1, 2])
+                    ca.write(f"**{st.session_state.portfolio[t]['Nome']}**")
+                    cb.markdown(f"<span class='{'pos-ret' if r1a>=0 else 'neg-ret'}'>1A: {r1a:+.2f}%</span>", unsafe_allow_html=True)
+                    cc.markdown(f"<span class='{'pos-ret' if r6m>=0 else 'neg-ret'}'>6M: {r6m:+.2f}%</span>", unsafe_allow_html=True)
+                    cd.write(f"{data[t].iloc[0]:.2f}€ → {data[t].iloc[-1]:.2f}€")
+        except: st.error("Errore analisi.")
 else:
     st.info("👈 Inserisci un ISIN per iniziare.")
