@@ -32,7 +32,6 @@ st.markdown("""
     .neg-ret { color: #d32f2f; font-weight: 700; }
     .small-metric-label { font-size: 0.9rem; color: #5f6368; font-weight: 500; }
     .small-metric-value { font-size: 1.25rem; font-weight: 800; color: #1a1c1e; }
-    /* Stile pulsanti azione */
     .stButton button { width: 100%; padding: 2px 5px; }
     </style>
     """, unsafe_allow_html=True)
@@ -47,20 +46,37 @@ def get_exchange_rate(ticker_currency):
         return float(rate) if rate else 1.0
     except: return 1.0
 
+def update_all_prices():
+    """Scarica i prezzi più recenti per tutti gli ETF in portafoglio"""
+    if not st.session_state.portfolio:
+        return
+    
+    with st.spinner("Aggiornamento dati di borsa in corso..."):
+        for ticker in st.session_state.portfolio:
+            try:
+                y_obj = yf.Ticker(ticker)
+                # Prendi il prezzo più recente disponibile
+                new_price = y_obj.info.get('currentPrice') or y_obj.info.get('regularMarketPrice') or y_obj.info.get('previousClose')
+                if new_price:
+                    st.session_state.portfolio[ticker]['Prezzo'] = float(new_price)
+                
+                # Aggiorna anche il cambio valuta
+                curr = st.session_state.portfolio[ticker]['Valuta']
+                st.session_state.portfolio[ticker]['Cambio'] = get_exchange_rate(curr)
+            except:
+                continue
+        st.toast("✅ Prezzi e cambi aggiornati con successo!")
+
 def load_from_df(df):
     df = df.fillna(0)
     new_port = {}
     for _, row in df.iterrows():
         t = str(row['Ticker']).upper()
         new_port[t] = {
-            'Nome': row.get('Nome', t), 
-            'ISIN': str(row.get('ISIN', '')),
-            'Politica': str(row.get('Politica', 'Acc')), 
-            'TER': str(row.get('TER', '')),
-            'Peso': float(row.get('Peso', 0)), 
-            'Prezzo': float(row.get('Prezzo', 0)),
-            'Valuta': str(row.get('Valuta', 'EUR')), 
-            'Cambio': float(row.get('Cambio', 1.0)),
+            'Nome': row.get('Nome', t), 'ISIN': str(row.get('ISIN', '')),
+            'Politica': str(row.get('Politica', 'Acc')), 'TER': str(row.get('TER', '')),
+            'Peso': float(row.get('Peso', 0)), 'Prezzo': float(row.get('Prezzo', 0)),
+            'Valuta': str(row.get('Valuta', 'EUR')), 'Cambio': float(row.get('Cambio', 1.0)),
             'Investito_Reale': float(row.get('Investito_Reale', 0.0)),
             'Quote_Reali': float(row.get('Quote_Reali', 0.0))
         }
@@ -80,8 +96,7 @@ def fetch_historical_data(tickers):
     if not tickers: return pd.DataFrame()
     data = yf.download(list(tickers), period="1y", progress=False)['Close']
     if len(tickers) == 1:
-        data = data.to_frame()
-        data.columns = list(tickers)
+        data = data.to_frame(); data.columns = list(tickers)
     return data.ffill().dropna()
 
 # --- INIZIALIZZAZIONE ---
@@ -97,26 +112,28 @@ if 'total_budget' not in st.session_state:
 # --- SIDEBAR ---
 st.sidebar.title("📁 Gestione Portafoglio")
 
-if st.sidebar.button("💾 SALVA PORTAFOGLIO", help="Salva permanentemente tutte le impostazioni, le percentuali e gli acquisti reali registrati."):
-    if save_data_locally(): st.sidebar.success("Dati salvati!")
+# BOTTONI PRINCIPALI
+c_side1, c_side2 = st.sidebar.columns(2)
+if c_side1.button("💾 SALVA", help="Salva i dati su file"):
+    if save_data_locally(): st.sidebar.success("Salvato!")
+
+if c_side2.button("🔄 AGGIORNA", help="Scarica i prezzi attuali di borsa per tutti gli ETF"):
+    update_all_prices()
+    st.rerun()
 
 st.sidebar.markdown("---")
-
-uploaded_file = st.sidebar.file_uploader("📥 Carica CSV", type="csv", help="Importa un file di portafoglio precedentemente salvato.")
+uploaded_file = st.sidebar.file_uploader("📥 Carica CSV", type="csv")
 if uploaded_file:
     load_from_df(pd.read_csv(uploaded_file))
     st.rerun()
 
 st.sidebar.markdown("---")
-st.session_state.total_budget = st.sidebar.number_input(
-    "Budget Mensile (€)", min_value=0.0, value=float(st.session_state.total_budget), step=50.0,
-    help="Inserisci la cifra totale che risparmi ogni mese. Verrà divisa automaticamente in quote settimanali."
-)
+st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", min_value=0.0, value=float(st.session_state.total_budget), step=50.0)
 
 st.sidebar.markdown("<div class='search-container'>", unsafe_allow_html=True)
 st.sidebar.subheader("🔍 Aggiungi ETF")
-target_isin = st.sidebar.text_input("Inserisci ISIN", placeholder="es: IE00B4L5Y983", help="Il codice ISIN dell'asset che vuoi monitorare.").strip().upper()
-if st.sidebar.button("CERCA E AGGIUNGI", help="Recupera i dati dell'asset da Yahoo Finance e lo aggiunge alla tua lista."):
+target_isin = st.sidebar.text_input("Inserisci ISIN").strip().upper()
+if st.sidebar.button("CERCA E AGGIUNGI"):
     if target_isin:
         try:
             with st.spinner("Analisi..."):
@@ -137,7 +154,6 @@ st.sidebar.markdown("</div>", unsafe_allow_html=True)
 st.title("💰 Il mio Piano d'Accumulo")
 
 if st.session_state.portfolio:
-    # Aumentato leggermente lo spazio per l'ultima colonna per ospitare più tasti
     cols = st.columns([2.5, 0.9, 0.8, 0.7, 1.0, 1.0, 0.8, 1.0])
     labels = ["Asset / JustETF", "Dati", "Prezzo €", "Peso %", "Mensile €", "Settim. €", "Quote S.", "Azioni"]
     for col, lab in zip(cols, labels): col.write(f"**{lab}**")
@@ -169,11 +185,11 @@ if st.session_state.portfolio:
             st.markdown(f"<a href='{url_just}' target='_blank' class='just-link-btn'>JustETF</a>", unsafe_allow_html=True)
 
         with c2:
-            asset['Politica'] = st.selectbox("T", ["Acc", "Dist"], index=0 if asset['Politica']=="Acc" else 1, key=f"p_{ticker}", label_visibility="collapsed", help="Politica dividendi.")
-            asset['TER'] = st.text_input("T", asset['TER'], key=f"t_{ticker}", label_visibility="collapsed", help="Costo annuo (TER).")
+            asset['Politica'] = st.selectbox("T", ["Acc", "Dist"], index=0 if asset['Politica']=="Acc" else 1, key=f"p_{ticker}", label_visibility="collapsed")
+            asset['TER'] = st.text_input("T", asset['TER'], key=f"t_{ticker}", label_visibility="collapsed")
 
         c3.write(f"**{p_eur:.2f}**")
-        w = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed", help="Peso percentuale nel portafoglio.")
+        w = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
         asset['Peso'] = w
         tot_w += w
         
@@ -183,24 +199,16 @@ if st.session_state.portfolio:
 
         with c8:
             act_cols = st.columns(3)
-            # TASTO AGGIUNGI
-            if act_cols[0].button("➕", key=f"buy_{ticker}", help="Registra l'acquisto della quota settimanale."):
+            if act_cols[0].button("➕", key=f"buy_{ticker}", help="Registra acquisto settimanale"):
                 asset['Investito_Reale'] += inv_w
                 asset['Quote_Reali'] += (inv_w / p_eur) if p_eur > 0 else 0
                 st.rerun()
-            
-            # TASTO RIMUOVI (L'ultimo inserimento)
-            if act_cols[1].button("➖", key=f"rem_{ticker}", help="Rimuovi l'ultima quota registrata (storno per errore)."):
+            if act_cols[1].button("➖", key=f"rem_{ticker}", help="Storna l'ultima quota"):
                 if asset['Investito_Reale'] >= inv_w:
                     asset['Investito_Reale'] -= inv_w
-                    # Sottraiamo le quote proporzionalmente all'investimento rimosso (basato sul prezzo attuale)
                     asset['Quote_Reali'] = max(0.0, asset['Quote_Reali'] - (inv_w / p_eur)) if p_eur > 0 else 0
                     st.rerun()
-                else:
-                    st.toast("Nessun investimento da stornare.")
-            
-            # TASTO CANCELLA ASSET
-            if act_cols[2].button("🗑️", key=f"d_{ticker}", help="Elimina questo ETF dal piano."):
+            if act_cols[2].button("🗑️", key=f"d_{ticker}"):
                 del st.session_state.portfolio[ticker]; st.rerun()
 
     st.markdown("---")
@@ -209,10 +217,10 @@ if st.session_state.portfolio:
     if total_invested_all > 0:
         st.subheader("🏦 Riepilogo Portafoglio Reale")
         r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Capitale Versato", f"{total_invested_all:,.2f} €", help="Totale dei soldi effettivamente investiti (somma dei tasti ➕).")
-        r2.metric("Valore Attuale", f"{current_value_all:,.2f} €", help="Valore attuale di mercato delle tue quote.")
-        r3.metric("Profit & Loss", f"{(current_value_all - total_invested_all):+,.2f} €", f"{((current_value_all/total_invested_all)-1)*100:+.2f}%", help="Il tuo guadagno o perdita reale.")
-        if r4.button("🧹 Reset Dati Reali", help="Azzera tutto il monitoraggio reale (il piano rimane invariato)."):
+        r1.metric("Capitale Versato", f"{total_invested_all:,.2f} €")
+        r2.metric("Valore Attuale", f"{current_value_all:,.2f} €")
+        r3.metric("Profit & Loss", f"{(current_value_all - total_invested_all):+,.2f} €", f"{((current_value_all/total_invested_all)-1)*100:+.2f}%")
+        if r4.button("🧹 Reset Dati"):
             for t in st.session_state.portfolio:
                 st.session_state.portfolio[t]['Investito_Reale'] = 0.0
                 st.session_state.portfolio[t]['Quote_Reali'] = 0.0
@@ -221,7 +229,6 @@ if st.session_state.portfolio:
     # --- ANALISI STORICA ---
     st.subheader("📈 Analisi Storica Strategia (Ultimi 12 mesi)")
     active_tickers = [t for t in st.session_state.portfolio if st.session_state.portfolio[t]['Peso'] > 0]
-    
     if active_tickers:
         try:
             data = fetch_historical_data(tuple(active_tickers))
@@ -233,12 +240,11 @@ if st.session_state.portfolio:
                     port_line += norm[t] * (st.session_state.portfolio[t]['Peso'] / tot_w_ins)
                 
                 m1, m2, m3 = st.columns(3)
-                with m1: st.markdown(f"<div class='small-metric-label'>Rendimento PAC (1A)</div><div class='small-metric-value'>{port_line.iloc[-1]-100:+.2f}%</div>", unsafe_allow_html=True)
-                with m2: st.markdown(f"<div class='small-metric-label'>Rendimento PAC (6M)</div><div class='small-metric-value'>{((port_line.iloc[-1]/port_line.iloc[-len(port_line)//2])-1)*100:+.2f}%</div>", unsafe_allow_html=True)
-                with m3:
-                    perf_etf = ((data.iloc[-1]/data.iloc[0])-1)*100
-                    bt = perf_etf.idxmax()
-                    st.markdown(f"<div class='small-metric-label'>🏆 Migliore Asset Attivo</div><div class='best-asset-value'>{st.session_state.portfolio[bt]['Nome'][:35]}...</div><div class='best-asset-pct'>{perf_etf.max():+.2f}%</div>", unsafe_allow_html=True)
+                m1.markdown(f"<div class='small-metric-label'>Rendimento PAC (1A)</div><div class='small-metric-value'>{port_line.iloc[-1]-100:+.2f}%</div>", unsafe_allow_html=True)
+                m2.markdown(f"<div class='small-metric-label'>Rendimento PAC (6M)</div><div class='small-metric-value'>{((port_line.iloc[-1]/port_line.iloc[-len(port_line)//2])-1)*100:+.2f}%</div>", unsafe_allow_html=True)
+                perf_etf = ((data.iloc[-1]/data.iloc[0])-1)*100
+                bt = perf_etf.idxmax()
+                m3.markdown(f"<div class='small-metric-label'>🏆 Migliore Asset Attivo</div><div style='color:#1a73e8; font-weight:800; font-size:1rem;'>{st.session_state.portfolio[bt]['Nome'][:35]}...</div><div class='pos-ret'>{perf_etf.max():+.2f}%</div>", unsafe_allow_html=True)
 
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC", line=dict(color='#FF3B30', width=5)))
@@ -254,6 +260,6 @@ if st.session_state.portfolio:
                     cb.markdown(f"<span class='{'pos-ret' if r1a>=0 else 'neg-ret'}'>1A: {r1a:+.2f}%</span>", unsafe_allow_html=True)
                     cc.markdown(f"<span class='{'pos-ret' if r6m>=0 else 'neg-ret'}'>6M: {r6m:+.2f}%</span>", unsafe_allow_html=True)
                     cd.write(f"{data[t].iloc[0]:.2f}€ → {data[t].iloc[-1]:.2f}€")
-        except: st.error("Errore recupero dati Yahoo Finance.")
+        except: st.error("Errore caricamento dati Yahoo Finance.")
 else:
-    st.info("👈 Inserisci un codice ISIN nella barra laterale blu per iniziare il tuo piano.")
+    st.info("👈 Inserisci un codice ISIN per iniziare.")
