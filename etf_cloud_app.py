@@ -69,7 +69,7 @@ st.markdown("""
         color: #1a1c1e !important;
     }
     [data-testid="stMetricDelta"] {
-        font-size: 0.5rem !important;
+        font-size: 0.9rem !important;
     }
 
     /* Stile Tabella e Asset */
