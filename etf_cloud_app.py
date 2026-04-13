@@ -126,7 +126,8 @@ with st.sidebar.expander("➕ Aggiungi ETF"):
         except: st.error("Non trovato")
 
 st.sidebar.markdown("---")
-c_side1, c_side2 = st.sidebar.columns(2)
+# CORREZIONE NameError: Qui ho rinominato le variabili correttamente
+c1, c2 = st.sidebar.columns(2)
 with c1:
     st.download_button("📥 Backup", data=pd.DataFrame([{'Ticker': k, **v} for k, v in st.session_state.portfolio.items()]).to_csv(index=False), file_name="mio_pac.csv", use_container_width=True)
 with c2:
@@ -175,7 +176,7 @@ else:
         with c2: st.markdown(f"<br><span class='tipo-tag {'acc-tag' if asset['Politica']=='Acc' else 'dist-tag'}'>{asset['Politica']}</span>", unsafe_allow_html=True)
         c3.write(f"<br>{p_eur:,.2f}", unsafe_allow_html=True)
         
-        # PERCENTUALI (CORRETTE)
+        # PERCENTUALI
         c4.number_input("%", 0.0, 100.0, float(asset['Peso']), step=0.5, key=f"input_w_{ticker}", on_change=sync_weight, args=(ticker,), label_visibility="collapsed")
         
         t_mensile = (float(asset['Peso']) / 100) * st.session_state.total_budget
