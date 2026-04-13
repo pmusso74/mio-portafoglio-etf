@@ -52,8 +52,11 @@ def update_all_prices():
         for ticker in st.session_state.portfolio:
             try:
                 y_obj = yf.Ticker(ticker)
-                new_price = y_obj.info.get('currentPrice') or y_obj.info.get('regularMarketPrice') or y_obj.info.get('previousClose')
+                inf = y_obj.info
+                new_price = inf.get('currentPrice') or inf.get('regularMarketPrice') or inf.get('previousClose')
+                prev_close = inf.get('previousClose')
                 if new_price: st.session_state.portfolio[ticker]['Prezzo'] = float(new_price)
+                if prev_close: st.session_state.portfolio[ticker]['PrevClose'] = float(prev_close)
                 curr = st.session_state.portfolio[ticker]['Valuta']
                 st.session_state.portfolio[ticker]['Cambio'] = get_exchange_rate(curr)
             except: continue
@@ -68,6 +71,7 @@ def load_from_df(df):
             'Nome': row.get('Nome', t), 'ISIN': str(row.get('ISIN', '')),
             'Politica': str(row.get('Politica', 'Acc')), 'TER': str(row.get('TER', '')),
             'Peso': float(row.get('Peso', 0)), 'Prezzo': float(row.get('Prezzo', 0)),
+            'PrevClose': float(row.get('PrevClose', row.get('Prezzo', 0))),
             'Valuta': str(row.get('Valuta', 'EUR')), 'Cambio': float(row.get('Cambio', 1.0)),
             'Investito_Reale': float(row.get('Investito_Reale', 0.0)),
             'Quote_Reali': float(row.get('Quote_Reali', 0.0))
@@ -123,12 +127,13 @@ if st.sidebar.button("CERCA E AGGIUNGI"):
         try:
             with st.spinner("Analisi..."):
                 y_obj = yf.Ticker(target_isin)
-                info = y_obj.info
+                inf = y_obj.info
                 st.session_state.portfolio[y_obj.ticker] = {
-                    'Nome': info.get('longName', y_obj.ticker), 'ISIN': target_isin,
+                    'Nome': inf.get('longName', y_obj.ticker), 'ISIN': target_isin,
                     'Politica': 'Acc', 'TER': '0.20%', 'Peso': 0.0,
-                    'Prezzo': float(info.get('currentPrice') or info.get('previousClose')),
-                    'Valuta': info.get('currency', 'EUR'), 'Cambio': get_exchange_rate(info.get('currency', 'EUR')),
+                    'Prezzo': float(inf.get('currentPrice') or inf.get('previousClose')),
+                    'PrevClose': float(inf.get('previousClose') or 0),
+                    'Valuta': inf.get('currency', 'EUR'), 'Cambio': get_exchange_rate(inf.get('currency', 'EUR')),
                     'Investito_Reale': 0.0, 'Quote_Reali': 0.0
                 }
                 st.rerun()
@@ -147,20 +152,17 @@ if st.session_state.portfolio:
     all_tickers = list(st.session_state.portfolio.keys())
 
     for ticker, asset in st.session_state.portfolio.items():
-        if 'Investito_Reale' not in asset: asset['Investito_Reale'] = 0.0
-        if 'Quote_Reali' not in asset: asset['Quote_Reali'] = 0.0
-
         c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2.5, 0.9, 0.8, 0.7, 1.0, 1.0, 0.8, 1.0])
         p_eur = asset['Prezzo'] * asset.get('Cambio', 1.0)
         inv_m = (asset['Peso'] / 100) * st.session_state.total_budget
         inv_w = inv_m / 4.33
-        val_attuale = asset['Quote_Reali'] * p_eur
-        total_invested_all += asset['Investito_Reale']
+        val_attuale = asset.get('Quote_Reali', 0.0) * p_eur
+        total_invested_all += asset.get('Investito_Reale', 0.0)
         current_value_all += val_attuale
 
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:40]}</div><div class='isin-display'>{asset['ISIN']}</div>", unsafe_allow_html=True)
-            if asset['Investito_Reale'] > 0:
+            if asset.get('Investito_Reale', 0) > 0:
                 st.markdown(f"<div class='real-status'>Reale: {val_attuale:,.2f}€ ({(val_attuale-asset['Investito_Reale']):+,.2f}€)</div>", unsafe_allow_html=True)
             st.markdown(f"<a href='https://www.justetf.com/it/etf-profile.html?isin={asset['ISIN']}' target='_blank' class='just-link-btn'>JustETF</a>", unsafe_allow_html=True)
 
@@ -169,9 +171,8 @@ if st.session_state.portfolio:
             asset['TER'] = st.text_input("T", asset['TER'], key=f"t_{ticker}", label_visibility="collapsed")
 
         c3.write(f"**{p_eur:.2f}**")
-        w = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
-        asset['Peso'] = w
-        tot_w += w
+        asset['Peso'] = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
+        tot_w += asset['Peso']
         c5.markdown(f"<span class='euro-value'>{inv_m:,.2f}</span>", unsafe_allow_html=True)
         c6.markdown(f"<span class='weekly-value'>{inv_w:,.2f}</span>", unsafe_allow_html=True)
         c7.write(f"{inv_w/p_eur if p_eur>0 else 0:.2f}")
@@ -179,33 +180,17 @@ if st.session_state.portfolio:
         with c8:
             act = st.columns(3)
             if act[0].button("➕", key=f"b_{ticker}"):
-                asset['Investito_Reale'] += inv_w
-                asset['Quote_Reali'] += (inv_w / p_eur) if p_eur > 0 else 0
+                asset['Investito_Reale'] = asset.get('Investito_Reale', 0.0) + inv_w
+                asset['Quote_Reali'] = asset.get('Quote_Reali', 0.0) + (inv_w / p_eur)
                 st.rerun()
             if act[1].button("➖", key=f"r_{ticker}"):
-                if asset['Investito_Reale'] >= inv_w:
-                    asset['Investito_Reale'] -= inv_w
-                    asset['Quote_Reali'] = max(0.0, asset['Quote_Reali'] - (inv_w / p_eur)) if p_eur > 0 else 0
-                    st.rerun()
+                asset['Investito_Reale'] = max(0.0, asset.get('Investito_Reale', 0.0) - inv_w)
+                asset['Quote_Reali'] = max(0.0, asset.get('Quote_Reali', 0.0) - (inv_w / p_eur))
+                st.rerun()
             if act[2].button("🗑️", key=f"d_{ticker}"):
                 del st.session_state.portfolio[ticker]; st.rerun()
 
-    st.markdown("---")
-
-    # --- PERFORMANCE REALE ---
-    if total_invested_all > 0:
-        st.subheader("🏦 Riepilogo Portafoglio Reale")
-        r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Capitale Versato", f"{total_invested_all:,.2f} €")
-        r2.metric("Valore Attuale", f"{current_value_all:,.2f} €")
-        r3.metric("Profit & Loss", f"{(current_value_all - total_invested_all):+,.2f} €", f"{((current_value_all/total_invested_all)-1)*100:+.2f}%")
-        if r4.button("🧹 Reset Dati Reali"):
-            for t in st.session_state.portfolio:
-                st.session_state.portfolio[t]['Investito_Reale'], st.session_state.portfolio[t]['Quote_Reali'] = 0.0, 0.0
-            st.rerun()
-
-    # --- ANALISI STORICA ---
-    st.subheader("📈 Analisi Storica Strategia")
+    # --- ANALISI STORICA E ODIERNA ---
     active_tickers = [t for t in all_tickers if st.session_state.portfolio[t]['Peso'] > 0]
     if active_tickers:
         try:
@@ -217,42 +202,42 @@ if st.session_state.portfolio:
                 for t in active_tickers:
                     port_line += norm[t] * (st.session_state.portfolio[t]['Peso'] / tot_w_ins)
                 
-                # Metriche
+                # Calcolo Performance Odierna
+                today_data = []
+                pac_today_ret = 0
+                for t in active_tickers:
+                    asset = st.session_state.portfolio[t]
+                    # Calcolo variazione % di oggi
+                    change = ((asset['Prezzo'] / asset['PrevClose']) - 1) * 100 if asset.get('PrevClose', 0) > 0 else 0
+                    today_data.append({'Asset': asset['Nome'][:30], 'Variazione %': change})
+                    pac_today_ret += change * (asset['Peso'] / tot_w_ins)
+                
+                today_data.append({'Asset': '⭐ IL TUO PAC (TOTALE)', 'Variazione %': pac_today_ret})
+                df_today = pd.DataFrame(today_data)
+
+                # Metriche Small
+                st.markdown("---")
                 m1, m2, m3 = st.columns(3)
                 m1.markdown(f"<div class='small-metric-label'>Rendimento 1 Anno</div><div class='small-metric-value'>{port_line.iloc[-1]-100:+.2f}%</div>", unsafe_allow_html=True)
                 m2.markdown(f"<div class='small-metric-label'>Rendimento 6 Mesi</div><div class='small-metric-value'>{((port_line.iloc[-1]/port_line.iloc[-len(port_line)//2])-1)*100:+.2f}%</div>", unsafe_allow_html=True)
-                perf_ind = ((data[active_tickers].iloc[-1]/data[active_tickers].iloc[0])-1)*100
-                bt = perf_ind.idxmax()
-                m3.markdown(f"<div class='small-metric-label'>🏆 Migliore Asset</div><div style='color:#1a73e8; font-weight:800;'>{st.session_state.portfolio[bt]['Nome'][:35]}...</div><div class='pos-ret'>{perf_ind.max():+.2f}%</div>", unsafe_allow_html=True)
+                m3.markdown(f"<div class='small-metric-label'>Variazione di Oggi</div><div class='small-metric-value' style='color:{'#2e7d32' if pac_today_ret>=0 else '#d32f2f'}'>{pac_today_ret:+.2f}%</div>", unsafe_allow_html=True)
 
-                # GRAFICO 1: STORICO CUMULATIVO
+                # GRAFICO 1: STORICO
                 fig1 = go.Figure()
                 fig1.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC", line=dict(color='#FF3B30', width=5)))
                 for t in active_tickers:
-                    fig1.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=2), opacity=0.7))
-                fig1.update_layout(title="Andamento Cumulativo 1 Anno (Base 100)", template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.15))
+                    fig1.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=1.5), opacity=0.7))
+                fig1.update_layout(title="Andamento Storico 1 Anno", template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.1))
                 st.plotly_chart(fig1, use_container_width=True)
 
-                # GRAFICO 2: VARIAZIONI GIORNALIERE (RICHIESTA UTENTE)
-                st.subheader("📊 Volatilità Giornaliera (%)")
-                daily_rets = data[active_tickers].pct_change() * 100
-                pac_daily = (daily_rets * [st.session_state.portfolio[t]['Peso']/tot_w_ins for t in active_tickers]).sum(axis=1)
-                
-                fig2 = go.Figure()
-                fig2.add_trace(go.Scatter(x=pac_daily.index, y=pac_daily, name="VARIAZIONE PAC", line=dict(color='#FF3B30', width=2), fill='tozeroy'))
-                for t in active_tickers:
-                    fig2.add_trace(go.Scatter(x=daily_rets.index, y=daily_rets[t], name=t, line=dict(width=1), opacity=0.4))
-                fig2.update_layout(title="Performance Giornaliera (%)", template="plotly_white", hovermode="x unified", yaxis_title="% Cambio Giorno")
+                # GRAFICO 2: PERFORMANCE DI OGGI (RICHIESTA UTENTE)
+                st.subheader("📊 Performance di Oggi")
+                fig2 = px.bar(df_today, x='Variazione %', y='Asset', orientation='h', 
+                             color='Variazione %', color_continuous_scale='RdYlGn',
+                             range_color=[-2, 2], text_auto='.2f')
+                fig2.update_layout(template="plotly_white", showlegend=False, height=300)
                 st.plotly_chart(fig2, use_container_width=True)
 
-                # Dettaglio Rendimenti
-                for t in active_tickers:
-                    r1a, r6m = ((data[t].iloc[-1]/data[t].iloc[0])-1)*100, ((data[t].iloc[-1]/data[t].iloc[-len(data)//2])-1)*100
-                    ca, cb, cc, cd = st.columns([3, 1, 1, 2])
-                    ca.write(f"**{st.session_state.portfolio[t]['Nome']}**")
-                    cb.markdown(f"<span class='{'pos-ret' if r1a>=0 else 'neg-ret'}'>1A: {r1a:+.2f}%</span>", unsafe_allow_html=True)
-                    cc.markdown(f"<span class='{'pos-ret' if r6m>=0 else 'neg-ret'}'>6M: {r6m:+.2f}%</span>", unsafe_allow_html=True)
-                    cd.write(f"{data[t].iloc[0]:.2f}€ → {data[t].iloc[-1]:.2f}€")
-        except: st.error("Errore dati Yahoo Finance.")
+        except Exception as e: st.error(f"Errore: {e}")
 else:
     st.info("👈 Inserisci un ISIN per iniziare.")
