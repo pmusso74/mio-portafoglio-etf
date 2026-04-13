@@ -51,9 +51,9 @@ def load_from_dataframe(df):
             }
         st.session_state.portfolio = new_port
         st.session_state.total_budget = float(df['Total_Budget'].iloc[0])
-        st.success("✅ Portafoglio caricato!")
+        st.success("✅ Portafoglio caricato correttamente!")
     except:
-        st.error("❌ Formato CSV non valido.")
+        st.error("❌ Errore: Il file CSV non ha il formato corretto.")
 
 # --- LOGICA AUTO-REFRESH ---
 if (time.time() - st.session_state.last_update) > UPDATE_INTERVAL:
@@ -70,12 +70,7 @@ st.markdown("""
     .acc-tag { background-color: #1a73e8; }
     .dist-tag { background-color: #f29900; }
     .real-status { color: #2e7d32; font-size: 0.75rem; font-weight: 600; margin-top: 3px; }
-    .just-link-btn { 
-        display: inline-block; margin-top: 5px; padding: 2px 10px; 
-        background-color: #ffffff; color: #1a73e8 !important; 
-        text-decoration: none !important; border: 1px solid #1a73e8;
-        border-radius: 4px; font-size: 0.65rem; font-weight: 700;
-    }
+    .just-link-btn { display: inline-block; margin-top: 5px; padding: 2px 10px; background-color: #ffffff; color: #1a73e8 !important; text-decoration: none !important; border: 1px solid #1a73e8; border-radius: 4px; font-size: 0.65rem; font-weight: 700; }
     .timer-info { font-size: 0.75rem; color: #d32f2f; font-weight: bold; background: #fff5f5; padding: 10px; border-radius: 5px; border: 1px solid #feb2b2; text-align: center; margin-top: 10px; }
     .budget-box { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #1a73e8; }
     </style>
@@ -84,28 +79,41 @@ st.markdown("""
 # --- SIDEBAR ---
 st.sidebar.header("📁 Gestione Portafoglio")
 
-# Sezione Caricamento
-uploaded_file = st.sidebar.file_uploader("📥 Carica Backup CSV", type="csv")
+# CARICAMENTO
+uploaded_file = st.sidebar.file_uploader("📥 Carica Backup CSV", type="csv", help="Carica il file salvato sul tuo PC per ripristinare i dati.")
 if uploaded_file:
     load_from_dataframe(pd.read_csv(uploaded_file))
 
 st.sidebar.markdown("---")
 st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", value=float(st.session_state.total_budget), step=50.0)
 
-# Tasti Azione Allineati
+# TASTI AZIONE
 col_btn1, col_btn2 = st.sidebar.columns(2)
-if col_btn1.button("💾 SALVA", use_container_width=True, help="Salva quote e pesi nel file locale"):
-    pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()]).to_csv(DB_FILE, index=False)
-    st.sidebar.success("Salvato!")
-
-if col_btn2.button("🔄 AGGIORNA", use_container_width=True, help="Aggiorna i prezzi di mercato"):
+if col_btn1.button("🔄 AGGIORNA", use_container_width=True):
     update_all_prices()
     st.rerun()
 
-# Sezione Aggiunta ETF
+if col_btn2.button("➕ AGGIUNGI", use_container_width=True):
+    # Scroll a espander aggiunta se premuto
+    pass
+
+# DOWNLOAD (Il modo sicuro per salvare su Cloud)
+if st.session_state.portfolio:
+    df_download = pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()])
+    csv_data = df_download.to_csv(index=False).encode('utf-8')
+    
+    st.sidebar.download_button(
+        label="📥 SCARICA BACKUP",
+        data=csv_data,
+        file_name=f"pac_backup_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        use_container_width=True,
+        help="IMPORTANTE: Scarica questo file per salvare i progressi sul tuo PC, poiché il cloud potrebbe resettarsi."
+    )
+
 with st.sidebar.expander("➕ Aggiungi nuovo ETF"):
     new_t = st.text_input("Ticker Yahoo").strip().upper()
-    if st.button("Aggiungi Asset", use_container_width=True):
+    if st.button("Conferma Aggiunta", use_container_width=True):
         try:
             y = yf.Ticker(new_t); i = y.info; n = i.get('shortName', new_t)
             st.session_state.portfolio[new_t] = {
@@ -118,7 +126,7 @@ with st.sidebar.expander("➕ Aggiungi nuovo ETF"):
             st.rerun()
         except: st.error("Ticker non trovato.")
 
-# Timer statico
+# Timer
 last_s = datetime.fromtimestamp(st.session_state.last_update).strftime('%H:%M:%S')
 next_s = datetime.fromtimestamp(st.session_state.last_update + UPDATE_INTERVAL).strftime('%H:%M:%S')
 st.sidebar.markdown(f"<div class='timer-info'>⏱ Ultimo: {last_s} | Prossimo: {next_s}</div>", unsafe_allow_html=True)
@@ -127,11 +135,12 @@ st.sidebar.markdown(f"<div class='timer-info'>⏱ Ultimo: {last_s} | Prossimo: {
 st.title("💰 ETF PAC Planner Pro")
 
 if not st.session_state.portfolio:
-    st.info("👋 Inizia caricando un file CSV o aggiungendo un ETF dal menu a sinistra.")
+    st.info("👋 Benvenuto! Carica un file CSV dal menu a sinistra o aggiungi un nuovo ETF per iniziare.")
 else:
     # Tabella
     h = st.columns([2.5, 0.6, 0.8, 0.8, 1, 1, 1.2])
-    for col, text in zip(h, ["Asset", "Tipo", "Prezzo €", "Peso %", "Mensile €", "Drift", "Azioni"]): col.write(f"**{text}**")
+    headers = ["Asset", "Tipo", "Prezzo €", "Peso %", "Mensile €", "Drift", "Azioni"]
+    for col, text in zip(h, headers): col.write(f"**{text}**")
 
     total_val_portafoglio = sum(a['Quote_Reali'] * a['Prezzo'] * a['Cambio'] for a in st.session_state.portfolio.values())
     
@@ -144,7 +153,7 @@ else:
         with c2: st.markdown(f"<span class='tipo-tag {'acc-tag' if asset['Politica']=='Acc' else 'dist-tag'}'>{asset['Politica']}</span>", unsafe_allow_html=True)
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:35]}</div><div class='ticker-label'>{ticker}</div>", unsafe_allow_html=True)
-            if v_attuale > 0: st.markdown(f"<div class='real-status'>Posseduto: {v_attuale:,.2f}€</div>", unsafe_allow_html=True)
+            if v_attuale > 0: st.markdown(f"<div class='real-status'>Valore: {v_attuale:,.2f}€</div>", unsafe_allow_html=True)
             if asset.get('ISIN'): st.markdown(f"<a href='https://www.justetf.com/it/etf-profile.html?isin={asset['ISIN']}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
 
         c3.write(f"{p_eur:,.2f}")
@@ -158,11 +167,11 @@ else:
 
         with c7:
             a1, a2, a3 = st.columns(3)
-            if a1.button("➕", key=f"add_{ticker}", help="Aggiungi una mensilità pianificata"):
+            if a1.button("➕", key=f"add_{ticker}", help="Registra acquisto quota mensile"):
                 asset['Investito_Reale'] += target_eur
                 asset['Quote_Reali'] += (target_eur / p_eur) if p_eur > 0 else 0
                 st.rerun()
-            if a2.button("➖", key=f"sub_{ticker}", help="Annulla/Sottrae una mensilità (anche se già salvata)"):
+            if a2.button("➖", key=f"sub_{ticker}", help="Storna quota mensile (annulla l'ultimo inserimento)"):
                 if asset['Investito_Reale'] >= target_eur:
                     asset['Investito_Reale'] -= target_eur
                     asset['Quote_Reali'] = max(0, asset['Quote_Reali'] - (target_eur / p_eur))
@@ -178,7 +187,7 @@ else:
     m2.metric("Valore Portafoglio", f"{total_val_portafoglio:,.2f} €")
     m3.metric("Profit/Loss", f"{total_val_portafoglio - tot_investito_reale:,.2f} €", f"{((total_val_portafoglio/tot_investito_reale)-1)*100 if tot_investito_reale>0 else 0:+.2f}%")
 
-    # --- GRAFICO STORICO ---
+    # --- GRAFICI ---
     st.subheader("📈 Performance Storica (1 Anno)")
     try:
         tks = list(st.session_state.portfolio.keys())
@@ -193,7 +202,7 @@ else:
             fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=1.5), opacity=0.6))
         fig.update_layout(template="plotly_white", height=400, margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", y=-0.2))
         st.plotly_chart(fig, use_container_width=True)
-    except: st.warning("Dati storici non disponibili.")
+    except: st.warning("Grafico storico non disponibile.")
 
     # --- ALLOCAZIONE E BUDGET ---
     st.markdown("---")
