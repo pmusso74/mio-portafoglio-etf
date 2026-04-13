@@ -10,7 +10,7 @@ from datetime import datetime
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="ETF PAC Planner Pro", layout="wide", page_icon="💰")
 DB_FILE = "pac_data.csv"
-UPDATE_INTERVAL = 600 # 10 minuti per evitare flickering e blocchi Yahoo
+UPDATE_INTERVAL = 600 
 
 # --- INIZIALIZZAZIONE STATO ---
 if 'portfolio' not in st.session_state:
@@ -37,7 +37,7 @@ def update_all_prices():
         except: continue
     st.session_state.last_update = time.time()
 
-# --- AUTO UPDATE ---
+# --- AUTO UPDATE PREZZI ---
 if (time.time() - st.session_state.last_update) > UPDATE_INTERVAL:
     update_all_prices()
 
@@ -58,8 +58,8 @@ st.markdown("""
         border-radius: 4px; font-size: 0.65rem; font-weight: 700;
     }
     .budget-box { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #1a73e8; margin-bottom: 20px; }
-    .weight-warning { color: #d32f2f; font-weight: bold; font-size: 1.1rem; }
-    .weight-ok { color: #2e7d32; font-weight: bold; font-size: 1.1rem; }
+    .weight-warning { color: #d32f2f; font-weight: bold; }
+    .weight-ok { color: #2e7d32; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -67,7 +67,7 @@ st.markdown("""
 st.sidebar.header("📊 Configurazione")
 st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", value=float(st.session_state.total_budget), step=50.0)
 
-with st.sidebar.expander("➕ Aggiungi ETF", expanded=True):
+with st.sidebar.expander("➕ Aggiungi ETF", expanded=False):
     new_t = st.text_input("Ticker Yahoo (es. SWDA.MI)").strip().upper()
     if st.button("Aggiungi Asset"):
         try:
@@ -83,12 +83,21 @@ with st.sidebar.expander("➕ Aggiungi ETF", expanded=True):
         except: st.error("Non trovato")
 
 st.sidebar.markdown("---")
-if st.sidebar.button("💾 SALVA DATI", use_container_width=True):
+c_side1, c_side2 = st.sidebar.columns(2)
+if c_side1.button("💾 SALVA", use_container_width=True):
     pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()]).to_csv(DB_FILE, index=False)
     st.sidebar.success("Salvato!")
 
-if st.sidebar.button("🔄 AGGIORNA ORA", use_container_width=True):
+if c_side2.button("🔄 AGGIORNA", use_container_width=True):
     update_all_prices(); st.rerun()
+
+# TASTO RESET
+st.sidebar.markdown("---")
+if st.sidebar.button("🧹 RESET DATI REALI", use_container_width=True, help="Azzera tutto il capitale investito e le quote possedute"):
+    for t in st.session_state.portfolio:
+        st.session_state.portfolio[t]['Investito_Reale'] = 0.0
+        st.session_state.portfolio[t]['Quote_Reali'] = 0.0
+    st.rerun()
 
 # --- MAIN ---
 st.title("💰 ETF PAC Planner Pro")
@@ -96,14 +105,14 @@ st.title("💰 ETF PAC Planner Pro")
 if not st.session_state.portfolio:
     st.info("Aggiungi un ETF dalla barra laterale per iniziare.")
 else:
-    # Calcolo Somma Pesi
+    # Calcolo Somma Pesi dinamica
     somma_pesi = sum(a['Peso'] for a in st.session_state.portfolio.values())
     
     # Avviso Pesi
     if somma_pesi != 100:
-        st.markdown(f"⚠️ <span class='weight-warning'>Attenzione: La somma dei pesi è {somma_pesi}% (Deve essere 100% per un calcolo Drift corretto)</span>", unsafe_allow_html=True)
+        st.markdown(f"⚠️ <span class='weight-warning'>Somma pesi attuale: {somma_pesi}% (Deve essere 100%)</span>", unsafe_allow_html=True)
     else:
-        st.markdown(f"✅ <span class='weight-ok'>Configurazione Pesi Corretta: {somma_pesi}%</span>", unsafe_allow_html=True)
+        st.markdown(f"✅ <span class='weight-ok'>Somma pesi corretta: {somma_pesi}%</span>", unsafe_allow_html=True)
 
     # Tabella
     h = st.columns([2.2, 0.6, 0.7, 0.7, 0.9, 0.9, 0.7, 1.2])
@@ -113,17 +122,17 @@ else:
     
     for ticker, asset in list(st.session_state.portfolio.items()):
         p_eur = asset['Prezzo'] * asset['Cambio']
-        target_eur = (asset['Peso'] / 100) * st.session_state.total_budget
-        target_settim = target_eur / 4.33
-        v_attuale = asset['Quote_Reali'] * p_eur
         
         c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2.2, 0.6, 0.7, 0.7, 0.9, 0.9, 0.7, 1.2])
+        
         with c2: st.markdown(f"<span class='tipo-tag {'acc-tag' if asset['Politica']=='Acc' else 'dist-tag'}'>{asset['Politica']}</span>", unsafe_allow_html=True)
+        
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:35]}</div><div class='ticker-label'>{ticker}</div>", unsafe_allow_html=True)
+            v_attuale = asset['Quote_Reali'] * p_eur
             if v_attuale > 0: st.markdown(f"<div class='real-status'>Valore: {v_attuale:,.2f}€</div>", unsafe_allow_html=True)
             
-            # --- LOGICA JUSTETF ---
+            # LOGICA JUSTETF
             isin_to_use = asset.get('ISIN', '')
             if not isin_to_use or len(str(isin_to_use)) < 10 or isin_to_use == "-":
                 just_etf_url = f"https://www.justetf.com/it/find-etf.html?query={ticker.split('.')[0]}"
@@ -132,7 +141,13 @@ else:
             st.markdown(f"<a href='{just_etf_url}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
 
         c3.write(f"{p_eur:,.2f}")
+        
+        # AGGIORNAMENTO PESO ISTANTANEO
         asset['Peso'] = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
+        
+        # Calcoli Budget (si aggiornano istantaneamente al cambio del Peso %)
+        target_eur = (asset['Peso'] / 100) * st.session_state.total_budget
+        target_settim = target_eur / 4.33
         
         c5.write(f"**{target_eur:,.2f}**")
         c6.write(f"{target_settim:,.2f}")
@@ -157,7 +172,7 @@ else:
             if act3.button("🗑️", key=f"del_{ticker}"):
                 del st.session_state.portfolio[ticker]; st.rerun()
 
-    # --- RIEPILOGO INVESTIMENTO (SPOSTATO IN ALTO RISPETTO AL GRAFICO) ---
+    # --- RIEPILOGO INVESTIMENTO ---
     st.markdown("---")
     tot_investito_reale = sum(a['Investito_Reale'] for a in st.session_state.portfolio.values())
     
@@ -172,7 +187,7 @@ else:
     with c_info:
         st.subheader("🏦 Stato dell'Investimento")
         st.markdown("<div class='budget-box'>", unsafe_allow_html=True)
-        st.write(f"**Somma Pesi impostata:** {somma_pesi}%")
+        st.write(f"**Somma Pesi:** {somma_pesi}%")
         st.write(f"**Capitale Totale Versato:** {tot_investito_reale:,.2f} €")
         st.write(f"**Budget Mensile PAC:** {st.session_state.total_budget:,.2f} €")
         
@@ -184,12 +199,12 @@ else:
     with c_pie:
         if total_val_portafoglio > 0:
             df_pie = pd.DataFrame([{'Asset': a['Nome'], 'Valore': a['Quote_Reali'] * a['Prezzo'] * a['Cambio']} for a in st.session_state.portfolio.values() if a['Quote_Reali'] > 0])
-            fig_p = px.pie(df_pie, values='Valore', names='Asset', hole=0.4, title="Suddivisione Reale Portafoglio (€)")
+            fig_p = px.pie(df_pie, values='Valore', names='Asset', hole=0.4, title="Suddivisione Reale (€)")
             fig_p.update_traces(textinfo='percent+label', hovertemplate='<b>%{label}</b><br>Valore: %{value:,.2f} €')
             fig_p.update_layout(height=350, margin=dict(l=0, r=0, t=30, b=0))
             st.plotly_chart(fig_p, use_container_width=True)
 
-    # --- GRAFICO STORICO (SPOSTATO IN FONDO) ---
+    # --- GRAFICO STORICO ---
     st.subheader("📈 Performance Storica (1 Anno)")
     try:
         tks = list(st.session_state.portfolio.keys())
