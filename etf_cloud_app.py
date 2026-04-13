@@ -14,23 +14,26 @@ st.markdown("""
     <style>
     .etf-name { color: #1E88E5; font-weight: bold; font-size: 1.1rem; line-height: 1.2; }
     .etf-meta { color: #555; font-size: 0.9rem; margin-top: 2px; }
-    .isin-code { color: #888; font-size: 0.85rem; font-family: monospace; font-weight: bold; }
+    .isin-code { color: #D32F2F; font-size: 0.85rem; font-family: monospace; font-weight: bold; }
     .just-link { 
         display: inline-block; margin-top: 6px; padding: 5px 12px; 
         background-color: #FB8C00; color: white !important; 
         text-decoration: none !important; border-radius: 4px; 
         font-size: 0.75rem; font-weight: bold; text-transform: uppercase;
     }
+    .just-link:hover { background-color: #EF6C00; }
     .euro-value { color: #2e7d32; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- FUNZIONI DI SUPPORTO ---
 def get_clean_isin(val):
+    """Pulisce l'ISIN eliminando spazi e scritte N/A"""
+    if pd.isna(val): return ""
     s = str(val).strip().upper()
-    if s in ["N/A", "N/", "NONE", "NAN", "NULL", ""] or len(s) < 10: return ""
-    if re.match(r"^[A-Z]{2}[A-Z0-9]{10}$", s): return s
-    return ""
+    if s in ["N/A", "N/", "NONE", "NAN", "NULL", ""] or len(s) < 8: 
+        return ""
+    return s
 
 @st.cache_data(ttl=3600)
 def get_exchange_rate(ticker_currency):
@@ -55,10 +58,14 @@ if uploaded_file:
         for _, row in df_load.iterrows():
             t = str(row['Ticker'])
             new_port[t] = {
-                'Nome': row.get('Nome', t), 'ISIN': get_clean_isin(row.get('ISIN', '')),
-                'Politica': str(row.get('Politica', 'Acc')), 'TER': str(row.get('TER', '')).replace("nan", ""),
-                'Peso': float(row.get('Peso', 0)), 'Prezzo': float(row.get('Prezzo', 0)),
-                'Valuta': row.get('Valuta', 'EUR'), 'Cambio': float(row.get('Cambio', 1.0))
+                'Nome': row.get('Nome', t), 
+                'ISIN': get_clean_isin(row.get('ISIN', '')),
+                'Politica': str(row.get('Politica', 'Acc')), 
+                'TER': str(row.get('TER', '')).replace("nan", ""),
+                'Peso': float(row.get('Peso', 0)), 
+                'Prezzo': float(row.get('Prezzo', 0)),
+                'Valuta': row.get('Valuta', 'EUR'), 
+                'Cambio': float(row.get('Cambio', 1.0))
             }
         st.session_state.portfolio = new_port
     except: st.sidebar.error("Errore caricamento CSV.")
@@ -80,7 +87,8 @@ if st.sidebar.button("Aggiungi"):
                 y_info = yf.Ticker(t_up).info
                 isin = get_clean_isin(y_info.get('isin', ''))
                 st.session_state.portfolio[t_up] = {
-                    'Nome': y_info.get('longName', t_up), 'ISIN': isin,
+                    'Nome': y_info.get('longName', t_up), 
+                    'ISIN': isin,
                     'Politica': 'Dist' if y_info.get('dividendYield', 0) > 0 else 'Acc',
                     'TER': f"{y_info.get('annualReportExpenseRatio', 0.2)*100:.2f}%" if y_info.get('annualReportExpenseRatio') else "0.20%",
                     'Peso': 0.0, 'Prezzo': float(y_info.get('currentPrice') or y_info.get('previousClose') or 0),
@@ -103,15 +111,30 @@ if st.session_state.portfolio:
         tickers_list.append(ticker)
         c1, c2, c3, c4, c5, c6, c7 = st.columns([3.5, 1.2, 1.0, 1.0, 1.3, 1.3, 0.4])
         
+        # 1. NOME, TICKER, ISIN E LINK
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:60]}</div>", unsafe_allow_html=True)
-            isin = asset.get('ISIN', '')
-            meta_html = f"<div class='etf-meta'>{ticker}" + (f" | <span class='isin-code'>{isin}</span>" if isin else "") + "</div>"
+            current_isin = asset.get('ISIN', '').strip()
+            
+            # Visualizzazione Meta (Ticker + ISIN)
+            meta_html = f"<div class='etf-meta'>{ticker}"
+            if current_isin:
+                meta_html += f" | <span class='isin-code'>{current_isin}</span>"
+            meta_html += "</div>"
             st.markdown(meta_html, unsafe_allow_html=True)
             
-            # Link JustETF
-            just_url = f"https://www.justetf.com/it/etf-profile.html?isin={isin}" if isin else f"https://www.justetf.com/it/find-etf.html?query={urllib.parse.quote(asset['Nome'])}"
-            st.markdown(f"<a href='{just_url}' target='_blank' class='just-link'>🔗 {'Scheda' if isin else 'Cerca'} JustETF</a>", unsafe_allow_html=True)
+            # COSTRUZIONE LINK (Priorità ISIN)
+            if current_isin:
+                # Link DIRETTO alla scheda tecnica tramite ISIN
+                just_url = f"https://www.justetf.com/it/etf-profile.html?isin={current_isin}"
+                link_label = f"Scheda {current_isin}"
+            else:
+                # Fallback alla ricerca tramite Nome
+                search_term = urllib.parse.quote(asset['Nome'])
+                just_url = f"https://www.justetf.com/it/find-etf.html?query={search_term}"
+                link_label = "Cerca su JustETF"
+            
+            st.markdown(f"<a href='{just_url}' target='_blank' class='just-link'>🔗 {link_label}</a>", unsafe_allow_html=True)
 
         with c2:
             st.session_state.portfolio[ticker]['Politica'] = st.selectbox("Tipo", ["Acc", "Dist"], index=0 if asset['Politica']=="Acc" else 1, key=f"p_{ticker}", label_visibility="collapsed")
@@ -137,8 +160,8 @@ if st.session_state.portfolio:
     t1, t2 = st.tabs(["📈 Performance Storica (1 Anno)", "📊 Distribuzione Budget"])
     
     with t1:
-        if st.button("🚀 Carica/Aggiorna Grafico Storico"):
-            with st.spinner("Elaborazione dati storici..."):
+        if st.button("🚀 Genera/Aggiorna Grafico Performance"):
+            with st.spinner("Scaricamento dati storici in corso..."):
                 try:
                     # Download dati 1 anno
                     data = yf.download(tickers_list, period="1y")['Close']
@@ -158,37 +181,37 @@ if st.session_state.portfolio:
                             weight = st.session_state.portfolio[t]['Peso'] / 100
                             portfolio_line += norm_data[t] * weight
                         
-                        # Creazione Grafico con Plotly Graph Objects per maggiore controllo
                         fig = go.Figure()
                         
-                        # Aggiunta linea Portafoglio (PAC)
+                        # Linea PAC Complessivo
                         fig.add_trace(go.Scatter(
                             x=portfolio_line.index, y=portfolio_line,
-                            name="IL TUO PAC (Complessivo)",
-                            line=dict(color='#FFD700', width=5), # Oro spesso
+                            name="PORTAFOGLIO TOTALE",
+                            line=dict(color='#FFD700', width=5),
                         ))
                         
-                        # Aggiunta linee singoli ETF
+                        # Linee singoli ETF
                         for t in tickers_list:
                             fig.add_trace(go.Scatter(
                                 x=norm_data.index, y=norm_data[t],
                                 name=f"{t}",
                                 line=dict(width=1.5),
-                                opacity=0.6
+                                opacity=0.5
                             ))
                         
                         fig.update_layout(
-                            title="Performance Relativa 1 Anno (Base 100)",
-                            xaxis_title="Data",
-                            yaxis_title="Valore Normalizzato",
+                            title="Performance Storica Normalizzata (Base 100)",
+                            xaxis_title="Ultimi 12 Mesi",
+                            yaxis_title="Valore Relativo",
                             hovermode="x unified",
+                            template="plotly_white",
                             legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
                         )
                         st.plotly_chart(fig, use_container_width=True)
                     else:
-                        st.error("Dati non disponibili per questi ticker.")
+                        st.error("Dati storici non trovati per questi ticker.")
                 except Exception as e:
-                    st.error(f"Errore nel calcolo del grafico: {e}")
+                    st.error(f"Errore tecnico nel grafico: {e}")
 
     with t2:
         df_plot = pd.DataFrame([{'ETF': k, 'Peso': v['Peso']} for k,v in st.session_state.portfolio.items() if v['Peso']>0])
