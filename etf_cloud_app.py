@@ -17,7 +17,6 @@ st.markdown("""
     .etf-name { color: #1a1c1e; font-weight: 700; font-size: 1.1rem; margin-bottom: 2px; }
     .isin-display { color: #d32f2f; font-weight: bold; font-family: monospace; font-size: 0.9rem; margin-bottom: 10px; }
     
-    /* Box di ricerca ISIN nella sidebar */
     .search-container {
         background-color: #f0f7ff;
         padding: 15px;
@@ -26,7 +25,6 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
-    /* Tasto JustETF elegante */
     .just-link-btn { 
         display: inline-block; margin-top: 8px; padding: 6px 18px; 
         background-color: #ffffff; color: #1a73e8 !important; 
@@ -36,10 +34,8 @@ st.markdown("""
     }
     .just-link-btn:hover { background-color: #1a73e8; color: white !important; }
     
-    /* Riduzione Font Rendimenti (Metriche) */
     .small-metric-label { font-size: 0.85rem; color: #5f6368; margin-bottom: 2px; }
     .small-metric-value { font-size: 1.1rem; font-weight: 700; color: #1a1c1e; }
-    .small-metric-delta { font-size: 0.9rem; font-weight: 600; }
 
     .euro-value { color: #2e7d32; font-weight: 700; font-size: 1.1rem; }
     .pos-ret { color: #2e7d32; font-weight: 700; }
@@ -57,6 +53,26 @@ def get_exchange_rate(ticker_currency):
         return float(rate) if rate else 1.0
     except: return 1.0
 
+def load_from_df(df):
+    """Mappa un dataframe caricato allo stato della sessione"""
+    df = df.fillna("")
+    new_port = {}
+    for _, row in df.iterrows():
+        t = str(row['Ticker']).upper()
+        new_port[t] = {
+            'Nome': row.get('Nome', t), 
+            'ISIN': str(row.get('ISIN', '')),
+            'Politica': str(row.get('Politica', 'Acc')), 
+            'TER': str(row.get('TER', '')),
+            'Peso': float(row.get('Peso', 0)), 
+            'Prezzo': float(row.get('Prezzo', 0)),
+            'Valuta': str(row.get('Valuta', 'EUR')), 
+            'Cambio': float(row.get('Cambio', 1.0))
+        }
+    st.session_state.portfolio = new_port
+    if 'Total_Budget' in df.columns:
+        st.session_state.total_budget = float(df['Total_Budget'].iloc[0])
+
 def save_data_locally():
     if st.session_state.portfolio:
         df_save = pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()])
@@ -64,37 +80,41 @@ def save_data_locally():
         return True
     return False
 
-def load_data():
-    if os.path.exists(DB_FILE):
-        df = pd.read_csv(DB_FILE).fillna("")
-        new_port = {}
-        for _, row in df.iterrows():
-            t = str(row['Ticker']).upper()
-            new_port[t] = {
-                'Nome': row.get('Nome', t), 'ISIN': str(row.get('ISIN', '')),
-                'Politica': str(row.get('Politica', 'Acc')), 'TER': str(row.get('TER', '')),
-                'Peso': float(row.get('Peso', 0)), 'Prezzo': float(row.get('Prezzo', 0)),
-                'Valuta': str(row.get('Valuta', 'EUR')), 'Cambio': float(row.get('Cambio', 1.0))
-            }
-        st.session_state.portfolio = new_port
-        st.session_state.total_budget = float(df['Total_Budget'].iloc[0]) if 'Total_Budget' in df.columns else 1000.0
-
 # --- INIZIALIZZAZIONE ---
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = {}
-    load_data()
+    if os.path.exists(DB_FILE):
+        load_from_df(pd.read_csv(DB_FILE))
+
 if 'total_budget' not in st.session_state:
     st.session_state.total_budget = 1000.0
 
 # --- SIDEBAR ---
-st.sidebar.title("📁 Gestione PAC")
-if st.sidebar.button("💾 SALVA MODIFICHE"):
+st.sidebar.title("📁 Gestione Portafoglio")
+
+# 1. TASTO SALVA
+if st.sidebar.button("💾 SALVA PORTAFOGLIO"):
     if save_data_locally(): st.sidebar.success("Salvato!")
 
 st.sidebar.markdown("---")
+
+# 2. TASTO UPLOAD (RIPRISTINATO)
+uploaded_file = st.sidebar.file_uploader("📥 Carica CSV esterno", type="csv")
+if uploaded_file is not None:
+    try:
+        df_manual = pd.read_csv(uploaded_file)
+        load_from_df(df_manual)
+        st.sidebar.success("File caricato!")
+        st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"Errore: {e}")
+
+st.sidebar.markdown("---")
+
+# 3. BUDGET
 st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", min_value=0.0, value=float(st.session_state.total_budget), step=50.0)
 
-# BOX DI RICERCA ISIN
+# 4. BOX RICERCA ISIN
 st.sidebar.markdown("<div class='search-container'>", unsafe_allow_html=True)
 st.sidebar.subheader("🔍 Aggiungi ETF")
 target_isin = st.sidebar.text_input("Inserisci Codice ISIN", placeholder="es: IE00B4L5Y983").strip().upper()
@@ -102,7 +122,7 @@ target_isin = st.sidebar.text_input("Inserisci Codice ISIN", placeholder="es: IE
 if st.sidebar.button("CERCA E AGGIUNGI"):
     if target_isin:
         try:
-            with st.spinner("Ricerca..."):
+            with st.spinner("Analisi..."):
                 y_obj = yf.Ticker(target_isin)
                 y_info = y_obj.info
                 ticker_id = y_obj.ticker
@@ -121,7 +141,7 @@ if st.sidebar.button("CERCA E AGGIUNGI"):
         except: st.sidebar.error("ISIN non trovato.")
 st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
-# --- DASHBOARD ---
+# --- DASHBOARD PRINCIPALE ---
 st.title("💰 Il mio Piano d'Accumulo")
 
 if st.session_state.portfolio:
@@ -142,25 +162,25 @@ if st.session_state.portfolio:
 
         with c2:
             st.session_state.portfolio[ticker]['Politica'] = st.selectbox("Tipo", ["Acc", "Dist"], index=0 if asset['Politica']=="Acc" else 1, key=f"p_{ticker}", label_visibility="collapsed")
-            st.session_state.portfolio[ticker]['TER'] = st.text_input("TER", asset.get('TER', ''), key=f"t_{ticker}", label_visibility="collapsed", placeholder="TER %")
+            st.session_state.portfolio[ticker]['TER'] = st.text_input("TER", asset.get('TER', ''), key=f"t_{ticker}", label_visibility="collapsed")
 
         p_eur = asset['Prezzo'] * asset.get('Cambio', 1.0)
         c3.write(f"**{p_eur:.2f} €**")
         w = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
         st.session_state.portfolio[ticker]['Peso'] = w
         tot_w += w
-        inv_mensile = (w / 100) * st.session_state.total_budget
-        c5.markdown(f"<span class='euro-value'>{inv_mensile:,.2f} €</span>", unsafe_allow_html=True)
-        c6.write(f"**{inv_mensile / p_eur if p_eur > 0 else 0:.2f}**")
+        inv_m = (w / 100) * st.session_state.total_budget
+        c5.markdown(f"<span class='euro-value'>{inv_m:,.2f} €</span>", unsafe_allow_html=True)
+        c6.write(f"**{inv_m / p_eur if p_eur > 0 else 0:.2f}**")
         if c7.button("🗑️", key=f"d_{ticker}"):
             del st.session_state.portfolio[ticker]; st.rerun()
 
     st.markdown("---")
 
-    # --- ANALISI RENDIMENTI ---
+    # --- PERFORMANCE ---
     st.subheader("📈 Analisi Performance")
     if st.button("🚀 GENERA ANALISI STORICA"):
-        with st.spinner("Analisi in corso..."):
+        with st.spinner("Analisi..."):
             try:
                 data = yf.download(active_tickers, period="1y")['Close']
                 if len(active_tickers) == 1: data = data.to_frame(); data.columns = active_tickers
@@ -172,22 +192,21 @@ if st.session_state.portfolio:
                     for t in active_tickers:
                         port_line += norm[t] * (st.session_state.portfolio[t]['Peso'] / 100)
                     
-                    # Calcolo Metriche Rendimento
+                    # Metriche Rendimento
                     ret_1y = port_line.iloc[-1] - 100
                     ret_6m = ((port_line.iloc[-1] / port_line.iloc[-len(port_line)//2]) - 1) * 100
                     perf_etf = ((data.iloc[-1] / data.iloc[0]) - 1) * 100
                     best_t = perf_etf.idxmax()
 
-                    # VISUALIZZAZIONE METRICHE CON FONT RIDOTTO
                     m1, m2, m3 = st.columns(3)
                     with m1:
                         st.markdown(f"<div class='small-metric-label'>Rendimento PAC (1 Anno)</div><div class='small-metric-value'>{ret_1y:+.2f}%</div>", unsafe_allow_html=True)
                     with m2:
                         st.markdown(f"<div class='small-metric-label'>Rendimento PAC (6 Mesi)</div><div class='small-metric-value'>{ret_6m:+.2f}%</div>", unsafe_allow_html=True)
                     with m3:
-                        st.markdown(f"<div class='small-metric-label'>Miglior Asset (1 Anno)</div><div class='small-metric-value' style='font-size:0.9rem;'>{st.session_state.portfolio[best_t]['Nome'][:30]}...</div><div class='pos-ret' style='font-size:0.9rem;'>{perf_etf.max():+.2f}%</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='small-metric-label'>Miglior Asset (1A)</div><div class='small-metric-value' style='font-size:0.9rem;'>{st.session_state.portfolio[best_t]['Nome'][:30]}...</div><div class='pos-ret' style='font-size:0.85rem;'>{perf_etf.max():+.2f}%</div>", unsafe_allow_html=True)
 
-                    # Grafico (PAC in ROSSO)
+                    # Grafico (ROSSO)
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC", line=dict(color='#FF3B30', width=4)))
                     for t in active_tickers:
@@ -200,16 +219,16 @@ if st.session_state.portfolio:
                     for t in active_tickers:
                         r_1y = ((data[t].iloc[-1] / data[t].iloc[0]) - 1) * 100
                         r_6m = ((data[t].iloc[-1] / data[t].iloc[-len(data)//2]) - 1) * 100
-                        col_a, col_b, col_c, col_d = st.columns([3, 1, 1, 2])
-                        col_a.write(st.session_state.portfolio[t]['Nome'])
-                        col_b.markdown(f"<span class='{'pos-ret' if r_1y >= 0 else 'neg-ret'}'>1A: {r_1y:+.2f}%</span>", unsafe_allow_html=True)
-                        col_c.markdown(f"<span class='{'pos-ret' if r_6m >= 0 else 'neg-ret'}'>6M: {r_6m:+.2f}%</span>", unsafe_allow_html=True)
-                        col_d.write(f"Prezzo: {data[t].iloc[0]:.2f}€ → {data[t].iloc[-1]:.2f}€")
-            except: st.error("Errore recupero dati.")
+                        ca, cb, cc, cd = st.columns([3, 1, 1, 2])
+                        ca.write(st.session_state.portfolio[t]['Nome'])
+                        cb.markdown(f"<span class='{'pos-ret' if r_1y>=0 else 'neg-ret'}'>1A: {r_1y:+.2f}%</span>", unsafe_allow_html=True)
+                        cc.markdown(f"<span class='{'pos-ret' if r_6m>=0 else 'neg-ret'}'>6M: {r_6m:+.2f}%</span>", unsafe_allow_html=True)
+                        cd.write(f"{data[t].iloc[0]:.2f}€ → {data[t].iloc[-1]:.2f}€")
+            except: st.error("Errore dati.")
 
-    # Grafico a torta
+    # Torta
     df_plot = pd.DataFrame([{'ETF': v['Nome'], 'Peso': v['Peso']} for v in st.session_state.portfolio.values() if v['Peso'] > 0])
     if not df_plot.empty:
-        st.plotly_chart(px.pie(df_plot, values='Peso', names='ETF', hole=0.4, title="Ripartizione Portafoglio"), use_container_width=True)
+        st.plotly_chart(px.pie(df_plot, values='Peso', names='ETF', hole=0.4, title="Ripartizione"), use_container_width=True)
 else:
-    st.info("👈 Inserisci un codice ISIN nella barra laterale per iniziare.")
+    st.info("👈 Inserisci un ISIN nella barra laterale o carica un file CSV per iniziare.")
