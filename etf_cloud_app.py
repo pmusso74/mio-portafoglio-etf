@@ -225,4 +225,19 @@ if st.session_state.portfolio:
                     st.markdown(f"<div class='small-metric-label'>🏆 Miglior Asset (1A)</div><div style='color:#1a73e8; font-weight:800; font-size:1rem;'>{st.session_state.portfolio[bt]['Nome'][:30]}...</div><div class='pos-ret'>{perf_etf.max():+.2f}%</div>", unsafe_allow_html=True)
 
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(x=port_line.index, y
+                fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC", line=dict(color='#FF3B30', width=5)))
+                for t in active_tickers:
+                    fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=2), opacity=0.8))
+                fig.update_layout(template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.15))
+                st.plotly_chart(fig, use_container_width=True)
+
+                for t in active_tickers:
+                    r1a, r6m = ((data[t].iloc[-1]/data[t].iloc[0])-1)*100, ((data[t].iloc[-1]/data[t].iloc[-len(data)//2])-1)*100
+                    ca, cb, cc, cd = st.columns([3, 1, 1, 2])
+                    ca.write(f"**{st.session_state.portfolio[t]['Nome']}**")
+                    cb.markdown(f"<span class='{'pos-ret' if r1a>=0 else 'neg-ret'}'>1A: {r1a:+.2f}%</span>", unsafe_allow_html=True)
+                    cc.markdown(f"<span class='{'pos-ret' if r6m>=0 else 'neg-ret'}'>6M: {r6m:+.2f}%</span>", unsafe_allow_html=True)
+                    cd.write(f"{data[t].iloc[0]:.2f}€ → {data[t].iloc[-1]:.2f}€")
+        except: st.error("Errore recupero dati Yahoo Finance.")
+else:
+    st.info("👈 Inserisci un codice ISIN nella barra laterale per iniziare il tuo piano.")
