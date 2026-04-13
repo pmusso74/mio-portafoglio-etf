@@ -29,7 +29,8 @@ st.markdown("""
     .small-metric-value { font-size: 1.25rem; font-weight: 800; color: #1a1c1e; }
     .best-asset-value { font-size: 1.1rem; font-weight: 800; color: #1a73e8; }
     .best-asset-pct { font-size: 1.05rem; font-weight: 700; color: #2e7d32; }
-    .euro-value { color: #2e7d32; font-weight: 700; font-size: 1.1rem; }
+    .euro-value { color: #2e7d32; font-weight: 700; font-size: 1.05rem; }
+    .weekly-value { color: #1a73e8; font-weight: 700; font-size: 1.05rem; }
     .pos-ret { color: #2e7d32; font-weight: 700; }
     .neg-ret { color: #d32f2f; font-weight: 700; }
     </style>
@@ -93,7 +94,7 @@ if 'total_budget' not in st.session_state:
 st.sidebar.title("📁 Gestione Portafoglio")
 
 if st.sidebar.button("💾 SALVA PORTAFOGLIO"):
-    if save_data_locally(): st.sidebar.success(f"Salvato!")
+    if save_data_locally(): st.sidebar.success("Salvato correttamente!")
 
 st.sidebar.markdown("---")
 
@@ -109,7 +110,10 @@ if uploaded_file is not None:
 st.sidebar.markdown("---")
 st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", min_value=0.0, value=float(st.session_state.total_budget), step=50.0)
 
-# BOX RICERCA ISIN
+# Calcolo settimanale totale
+weekly_total = st.session_state.total_budget / 4.33
+st.sidebar.markdown(f"**Budget Settimanale: {weekly_total:,.2f} €**")
+
 st.sidebar.markdown("<div class='search-container'>", unsafe_allow_html=True)
 st.sidebar.subheader("🔍 Aggiungi ETF")
 target_isin = st.sidebar.text_input("Inserisci Codice ISIN", placeholder="es: IE00B4L5Y983").strip().upper()
@@ -140,64 +144,65 @@ st.sidebar.markdown("</div>", unsafe_allow_html=True)
 st.title("💰 Il mio Piano d'Accumulo")
 
 if st.session_state.portfolio:
-    cols = st.columns([3.8, 1.2, 1.0, 1.0, 1.5, 1.5, 0.5])
-    header_labels = ["Asset / Documentazione", "Dati Tecnici", "Prezzo €", "Peso %", "Investimento", "Quote", ""]
+    # Colonne ricalibrate per ospitare il dato settimanale
+    cols = st.columns([2.8, 1.0, 0.8, 0.7, 1.1, 1.1, 1.1, 0.4])
+    header_labels = ["Asset / JustETF", "Dati", "Prezzo €", "Peso %", "Mensile €", "Settim. €", "Quote Sett.", ""]
     for col, lab in zip(cols, header_labels): col.write(f"**{lab}**")
 
     tot_w = 0
     all_tickers = list(st.session_state.portfolio.keys())
     
     for ticker, asset in st.session_state.portfolio.items():
-        c1, c2, c3, c4, c5, c6, c7 = st.columns([3.8, 1.2, 1.0, 1.0, 1.5, 1.5, 0.5])
+        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2.8, 1.0, 0.8, 0.7, 1.1, 1.1, 1.1, 0.4])
         with c1:
-            st.markdown(f"<div class='etf-name'>{asset['Nome']}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='etf-name'>{asset['Nome'][:50]}</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='isin-display'>{asset['ISIN']}</div>", unsafe_allow_html=True)
             url_just = f"https://www.justetf.com/it/etf-profile.html?isin={asset['ISIN']}"
-            st.markdown(f"<a href='{url_just}' target='_blank' class='just-link-btn'>Vai alla scheda JustETF</a>", unsafe_allow_html=True)
+            st.markdown(f"<a href='{url_just}' target='_blank' class='just-link-btn'>JustETF</a>", unsafe_allow_html=True)
 
         with c2:
             st.session_state.portfolio[ticker]['Politica'] = st.selectbox("Tipo", ["Acc", "Dist"], index=0 if asset['Politica']=="Acc" else 1, key=f"p_{ticker}", label_visibility="collapsed")
-            st.session_state.portfolio[ticker]['TER'] = st.text_input("TER", asset.get('TER', ''), key=f"t_{ticker}", label_visibility="collapsed", placeholder="TER %")
+            st.session_state.portfolio[ticker]['TER'] = st.text_input("TER", asset.get('TER', ''), key=f"t_{ticker}", label_visibility="collapsed", placeholder="%")
 
         p_eur = asset['Prezzo'] * asset.get('Cambio', 1.0)
-        c3.write(f"**{p_eur:.2f} €**")
+        c3.write(f"**{p_eur:.2f}**")
+        
         w = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
         st.session_state.portfolio[ticker]['Peso'] = w
         tot_w += w
+        
+        # Calcoli Money
         inv_m = (w / 100) * st.session_state.total_budget
-        c5.markdown(f"<span class='euro-value'>{inv_m:,.2f} €</span>", unsafe_allow_html=True)
-        c6.write(f"**{inv_m / p_eur if p_eur > 0 else 0:.2f}**")
-        if c7.button("🗑️", key=f"d_{ticker}"):
+        inv_w = inv_m / 4.33
+        
+        c5.markdown(f"<span class='euro-value'>{inv_m:,.2f}</span>", unsafe_allow_html=True)
+        c6.markdown(f"<span class='weekly-value'>{inv_w:,.2f}</span>", unsafe_allow_html=True)
+        
+        # Quote settimanali
+        q_w = inv_w / p_eur if p_eur > 0 else 0
+        c7.write(f"**{q_w:.2f}**")
+        
+        if c8.button("🗑️", key=f"d_{ticker}"):
             del st.session_state.portfolio[ticker]; st.rerun()
 
     st.markdown("---")
 
-    # --- ANALISI AUTOMATICA (FILTRATA PER PESO > 0) ---
+    # --- ANALISI AUTOMATICA ---
     st.subheader("📈 Performance Storica Aggiornata")
-    
-    # Identifichiamo solo i ticker con peso > 0
     tickers_attivi = [t for t in all_tickers if st.session_state.portfolio[t]['Peso'] > 0]
 
     try:
-        # Scarichiamo i dati per TUTTI i ticker per efficienza cache, ma lavoriamo solo con gli attivi
         data = fetch_historical_data(tuple(all_tickers)) 
-        
         if not data.empty and tickers_attivi:
             tot_w_inserito = sum(st.session_state.portfolio[t]['Peso'] for t in tickers_attivi)
-
             norm = (data / data.iloc[0]) * 100
             port_line = pd.Series(0.0, index=norm.index)
-            
-            # Calcolo linea Portafoglio RITARATA
             for t in tickers_attivi:
                 w_relativo = st.session_state.portfolio[t]['Peso'] / tot_w_inserito
                 port_line += norm[t] * w_relativo
             
-            # Metriche Rendimento
             ret_1y = port_line.iloc[-1] - 100
             ret_6m = ((port_line.iloc[-1] / port_line.iloc[-len(port_line)//2]) - 1) * 100
-            
-            # Performance singoli (solo attivi)
             perf_attivi = ((data[tickers_attivi].iloc[-1] / data[tickers_attivi].iloc[0]) - 1) * 100
             best_t = perf_attivi.idxmax()
 
@@ -209,16 +214,14 @@ if st.session_state.portfolio:
             with m3:
                 st.markdown(f"<div class='small-metric-label'>🏆 Miglior Asset Attivo (1 Anno)</div><div class='best-asset-value'>{st.session_state.portfolio[best_t]['Nome'][:40]}</div><div class='best-asset-pct'>{perf_attivi.max():+.2f}%</div>", unsafe_allow_html=True)
 
-            # Grafico (Solo Tickers Attivi)
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC", line=dict(color='#FF3B30', width=5)))
             for t in tickers_attivi:
                 fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:25], line=dict(width=2), opacity=0.8))
-            
             fig.update_layout(template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.15))
             st.plotly_chart(fig, use_container_width=True)
 
-            # Dettaglio Rendimenti (Solo Tickers Attivi)
+            # Dettaglio Rendimenti riga per riga
             st.markdown("### 📋 Dettaglio Rendimenti Asset Attivi")
             for t in tickers_attivi:
                 r_1y = ((data[t].iloc[-1] / data[t].iloc[0]) - 1) * 100
@@ -229,7 +232,7 @@ if st.session_state.portfolio:
                 cc.markdown(f"<span class='{'pos-ret' if r_6m>=0 else 'neg-ret'}'>6M: {r_6m:+.2f}%</span>", unsafe_allow_html=True)
                 cd.write(f"{data[t].iloc[0]:.2f}€ → {data[t].iloc[-1]:.2f}€")
         elif not tickers_attivi:
-            st.warning("Imposta una percentuale di peso (%) su almeno un ETF per visualizzare l'analisi.")
+            st.warning("Imposta una percentuale di peso (%) su almeno un ETF per attivare l'analisi.")
     except Exception as e:
         st.error(f"Errore caricamento analisi: {e}")
 
