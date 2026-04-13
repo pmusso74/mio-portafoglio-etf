@@ -20,6 +20,11 @@ if 'last_update' not in st.session_state:
 if 'total_budget' not in st.session_state:
     st.session_state.total_budget = 1000.0
 
+# --- CALLBACK PER AGGIORNAMENTO ISTANTANEO PESI ---
+def sync_weight(ticker):
+    # Questa funzione viene eseguita IMMEDIATAMENTE quando cambi il valore nel box
+    st.session_state.portfolio[ticker]['Peso'] = st.session_state[f"input_w_{ticker}"]
+
 # --- FUNZIONI ---
 def detect_policy(inf, nome):
     y_val = inf.get('dividendYield') or inf.get('trailingAnnualDividendYield') or 0
@@ -93,7 +98,7 @@ if c_side2.button("🔄 AGGIORNA", use_container_width=True):
 
 # TASTO RESET
 st.sidebar.markdown("---")
-if st.sidebar.button("🧹 RESET DATI REALI", use_container_width=True, help="Azzera tutto il capitale investito e le quote possedute"):
+if st.sidebar.button("🧹 RESET DATI REALI", use_container_width=True):
     for t in st.session_state.portfolio:
         st.session_state.portfolio[t]['Investito_Reale'] = 0.0
         st.session_state.portfolio[t]['Quote_Reali'] = 0.0
@@ -124,28 +129,26 @@ else:
         p_eur = asset['Prezzo'] * asset['Cambio']
         
         c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2.2, 0.6, 0.7, 0.7, 0.9, 0.9, 0.7, 1.2])
-        
         with c2: st.markdown(f"<span class='tipo-tag {'acc-tag' if asset['Politica']=='Acc' else 'dist-tag'}'>{asset['Politica']}</span>", unsafe_allow_html=True)
-        
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:35]}</div><div class='ticker-label'>{ticker}</div>", unsafe_allow_html=True)
             v_attuale = asset['Quote_Reali'] * p_eur
             if v_attuale > 0: st.markdown(f"<div class='real-status'>Valore: {v_attuale:,.2f}€</div>", unsafe_allow_html=True)
             
-            # LOGICA JUSTETF
             isin_to_use = asset.get('ISIN', '')
-            if not isin_to_use or len(str(isin_to_use)) < 10 or isin_to_use == "-":
-                just_etf_url = f"https://www.justetf.com/it/find-etf.html?query={ticker.split('.')[0]}"
-            else:
-                just_etf_url = f"https://www.justetf.com/it/etf-profile.html?isin={isin_to_use}"
+            just_etf_url = f"https://www.justetf.com/it/etf-profile.html?isin={isin_to_use}" if len(str(isin_to_use)) > 5 else f"https://www.justetf.com/it/find-etf.html?query={ticker.split('.')[0]}"
             st.markdown(f"<a href='{just_etf_url}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
 
         c3.write(f"{p_eur:,.2f}")
         
-        # AGGIORNAMENTO PESO ISTANTANEO
-        asset['Peso'] = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
+        # AGGIORNAMENTO PESO CON CALLBACK (Risolve il problema del ritardo)
+        c4.number_input("%", 0, 100, int(asset['Peso']), 
+                        key=f"input_w_{ticker}", 
+                        on_change=sync_weight, 
+                        args=(ticker,), 
+                        label_visibility="collapsed")
         
-        # Calcoli Budget (si aggiornano istantaneamente al cambio del Peso %)
+        # Calcoli Budget basati sul valore già sincronizzato dal callback
         target_eur = (asset['Peso'] / 100) * st.session_state.total_budget
         target_settim = target_eur / 4.33
         
@@ -172,10 +175,9 @@ else:
             if act3.button("🗑️", key=f"del_{ticker}"):
                 del st.session_state.portfolio[ticker]; st.rerun()
 
-    # --- RIEPILOGO INVESTIMENTO ---
+    # --- RIEPILOGO ---
     st.markdown("---")
     tot_investito_reale = sum(a['Investito_Reale'] for a in st.session_state.portfolio.values())
-    
     m1, m2, m3 = st.columns(3)
     m1.metric("Capitale Versato", f"{tot_investito_reale:,.2f} €")
     m2.metric("Valore Attuale", f"{total_val_portafoglio:,.2f} €")
@@ -183,25 +185,20 @@ else:
 
     st.markdown("---")
     c_info, c_pie = st.columns([1, 1.5])
-    
     with c_info:
         st.subheader("🏦 Stato dell'Investimento")
         st.markdown("<div class='budget-box'>", unsafe_allow_html=True)
-        st.write(f"**Somma Pesi:** {somma_pesi}%")
         st.write(f"**Capitale Totale Versato:** {tot_investito_reale:,.2f} €")
         st.write(f"**Budget Mensile PAC:** {st.session_state.total_budget:,.2f} €")
-        
         rapporto = tot_investito_reale / st.session_state.total_budget if st.session_state.total_budget > 0 else 0
         st.write(f"**Copertura Piano:** Hai accumulato **{rapporto:.1f} mensilità**.")
-        st.progress(min(rapporto / 24, 1.0), text="Progresso (Target 2 anni)")
+        st.progress(min(rapporto / 24, 1.0))
         st.markdown("</div>", unsafe_allow_html=True)
 
     with c_pie:
         if total_val_portafoglio > 0:
-            df_pie = pd.DataFrame([{'Asset': a['Nome'], 'Valore': a['Quote_Reali'] * a['Prezzo'] * a['Cambio']} for a in st.session_state.portfolio.values() if a['Quote_Reali'] > 0])
-            fig_p = px.pie(df_pie, values='Valore', names='Asset', hole=0.4, title="Suddivisione Reale (€)")
-            fig_p.update_traces(textinfo='percent+label', hovertemplate='<b>%{label}</b><br>Valore: %{value:,.2f} €')
-            fig_p.update_layout(height=350, margin=dict(l=0, r=0, t=30, b=0))
+            df_pie = pd.DataFrame([{'Asset': a['Nome'], 'Valore': a['Quote_Reali'] * a['Prezzo']} for a in st.session_state.portfolio.values() if a['Quote_Reali'] > 0])
+            fig_p = px.pie(df_pie, values='Valore', names='Asset', hole=0.4, title="Distribuzione Reale (€)")
             st.plotly_chart(fig_p, use_container_width=True)
 
     # --- GRAFICO STORICO ---
@@ -212,9 +209,9 @@ else:
         if len(tks) == 1: data = data.to_frame(); data.columns = tks
         norm = (data.ffill() / data.ffill().iloc[0]) * 100
         fig = go.Figure()
-        pesi_grafico = [st.session_state.portfolio[t]['Peso'] for t in tks]
-        if sum(pesi_grafico) > 0:
-            fig.add_trace(go.Scatter(x=norm.index, y=(norm * pesi_grafico).sum(axis=1)/sum(pesi_grafico), name="⭐ IL TUO PAC", line=dict(color='red', width=4), zorder=10))
+        pesi_g = [st.session_state.portfolio[t]['Peso'] for t in tks]
+        if sum(pesi_g) > 0:
+            fig.add_trace(go.Scatter(x=norm.index, y=(norm * pesi_g).sum(axis=1)/sum(pesi_g), name="⭐ IL TUO PAC", line=dict(color='red', width=4)))
         for t in tks:
             fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=1.5), opacity=0.6))
         fig.update_layout(template="plotly_white", height=400, margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", y=-0.2))
