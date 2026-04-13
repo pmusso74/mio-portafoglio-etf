@@ -5,11 +5,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 import urllib.parse
 import re
-import os  # Per gestire il salvataggio su disco
+import os
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="ETF PAC Planner", layout="wide", page_icon="💰")
-DB_FILE = "pac_data.csv" # Nome del file di salvataggio fisso
+st.set_page_config(page_title="ETF PAC Planner Pro", layout="wide", page_icon="💰")
+DB_FILE = "pac_data.csv"
 
 # CSS ESTETICA
 st.markdown("""
@@ -32,7 +32,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- FUNZIONI DI SERVIZIO ---
+# --- FUNZIONI ---
 def identify_isin(val1, val2=""):
     for v in [val1, val2]:
         s = str(v).strip().upper()
@@ -48,7 +48,7 @@ def get_exchange_rate(ticker_currency):
         return float(rate) if rate else 1.0
     except: return 1.0
 
-# --- LOGICA SALVATAGGIO LOCALE ---
+# --- LOGICA SALVATAGGIO ---
 def save_data_locally():
     if st.session_state.portfolio:
         df_save = pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()])
@@ -79,26 +79,15 @@ def load_data_locally():
 # --- INIZIALIZZAZIONE ---
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = {}
-    # Prova a caricare in automatico all'avvio
     load_data_locally()
 
 if 'total_budget' not in st.session_state:
     st.session_state.total_budget = 1000.0
 
 # --- SIDEBAR ---
-st.sidebar.header("💾 Gestione File")
-
+st.sidebar.header("💾 Gestione")
 if st.sidebar.button("💾 SALVA PORTAFOGLIO"):
-    if save_data_locally():
-        st.sidebar.success(f"Portafoglio salvato in {DB_FILE}")
-    else:
-        st.sidebar.error("Nulla da salvare.")
-
-# Caricamento manuale opzionale da altro file
-uploaded_file = st.sidebar.file_uploader("Carica da un altro CSV", type="csv")
-if uploaded_file:
-    # ... (stessa logica di caricamento di prima)
-    pass
+    if save_data_locally(): st.sidebar.success("Salvato correttamente!")
 
 st.sidebar.markdown("---")
 st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", min_value=0.0, value=float(st.session_state.total_budget))
@@ -111,7 +100,7 @@ if st.sidebar.button("Aggiungi ETF"):
     if in_ticker:
         t_up = in_ticker.upper().strip()
         try:
-            with st.spinner("Dati in corso..."):
+            with st.spinner("Recupero dati..."):
                 y_info = yf.Ticker(t_up).info
                 st.session_state.portfolio[t_up] = {
                     'Nome': y_info.get('longName', t_up), 
@@ -122,30 +111,29 @@ if st.sidebar.button("Aggiungi ETF"):
                     'Valuta': y_info.get('currency', 'EUR'), 'Cambio': get_exchange_rate(y_info.get('currency', 'EUR'))
                 }
                 st.rerun()
-        except: st.sidebar.error("Ticker non trovato.")
+        except: st.sidebar.error("Ticker errato.")
 
-# --- MAIN DASHBOARD ---
+# --- MAIN ---
 st.title("💰 ETF PAC Planner")
 
 if st.session_state.portfolio:
     cols = st.columns([3.8, 1.2, 1.0, 1.0, 1.3, 1.3, 0.4])
-    for col, lab in zip(cols, ["Dati ETF / JustETF", "Policy / TER", "Prezzo €", "Peso %", "Investimento", "Quote", ""]):
-        col.write(f"**{lab}**")
+    header_labels = ["Dati ETF / JustETF", "Policy / TER", "Prezzo €", "Peso %", "Investimento", "Quote", ""]
+    for col, lab in zip(cols, header_labels): col.write(f"**{lab}**")
 
     tot_w = 0
-    tickers_for_graph = []
+    tickers_list = []
     
     for ticker, asset in st.session_state.portfolio.items():
-        tickers_for_graph.append(ticker)
+        tickers_list.append(ticker)
         c1, c2, c3, c4, c5, c6, c7 = st.columns([3.8, 1.2, 1.0, 1.0, 1.3, 1.3, 0.4])
         
-        effective_isin = identify_isin(ticker, asset.get('ISIN', ''))
+        eff_isin = identify_isin(ticker, asset.get('ISIN', ''))
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome']}</div>", unsafe_allow_html=True)
-            meta_str = f"{ticker}" + (f" | {effective_isin}" if effective_isin else "")
+            meta_str = f"{ticker}" + (f" | {eff_isin}" if eff_isin else "")
             st.markdown(f"<div class='ticker-box'>{meta_str}</div>", unsafe_allow_html=True)
-            
-            url_just = f"https://www.justetf.com/it/etf-profile.html?isin={effective_isin}" if effective_isin else f"https://www.justetf.com/it/find-etf.html?query={urllib.parse.quote(asset['Nome'])}"
+            url_just = f"https://www.justetf.com/it/etf-profile.html?isin={eff_isin}" if eff_isin else f"https://www.justetf.com/it/find-etf.html?query={urllib.parse.quote(asset['Nome'])}"
             st.markdown(f"<a href='{url_just}' target='_blank' class='just-link-btn'>Vedi Scheda JustETF</a>", unsafe_allow_html=True)
 
         with c2:
@@ -166,46 +154,63 @@ if st.session_state.portfolio:
 
     st.markdown("---")
 
-    # --- PERFORMANCE E GRAFICO ---
-    st.subheader("📈 Analisi Performance e Rendimento")
+    # --- PERFORMANCE ---
+    st.subheader("📈 Analisi Rendimento Storico (1 Anno)")
     
-    if st.button("🚀 Aggiorna Analisi e Grafico"):
-        with st.spinner("Analisi in corso..."):
+    if st.button("🚀 Calcola e Visualizza Performance"):
+        with st.spinner("Analisi dati..."):
             try:
-                hist_data = yf.download(tickers_for_graph, period="1y")['Close']
-                if len(tickers_for_graph) == 1: 
-                    hist_data = hist_data.to_frame(); hist_data.columns = tickers_for_graph
+                hist_data = yf.download(tickers_list, period="1y")['Close']
+                if len(tickers_list) == 1: 
+                    hist_data = hist_data.to_frame(); hist_data.columns = tickers_list
                 hist_data = hist_data.ffill().dropna()
                 
                 if not hist_data.empty:
                     norm = (hist_data / hist_data.iloc[0]) * 100
                     port_line = pd.Series(0.0, index=norm.index)
-                    for t in tickers_for_graph:
+                    for t in tickers_list:
                         port_line += norm[t] * (st.session_state.portfolio[t]['Peso'] / 100)
                     
                     # RENDIMENTI
                     ret_1y = port_line.iloc[-1] - 100
                     ret_6m = ((port_line.iloc[-1] / port_line.iloc[-len(port_line)//2]) - 1) * 100
                     
-                    r1, r2, r3 = st.columns(3)
-                    r1.metric("Rendimento 1 Anno", f"{ret_1y:+.2f}%")
-                    r2.metric("Rendimento 6 Mesi", f"{ret_6m:+.2f}%")
-                    
+                    # Calcolo Miglior ETF (usando i Nomi)
                     perf_etf = ((hist_data.iloc[-1] / hist_data.iloc[0]) - 1) * 100
-                    r3.metric("Miglior ETF (1A)", f"{perf_etf.idxmax()}", f"{perf_etf.max():+.2f}%")
-
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC", line=dict(color='#FF3B30', width=5)))
-                    for t in tickers_for_graph:
-                        fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=f"{t}", line=dict(width=1.2), opacity=0.3))
+                    best_ticker = perf_etf.idxmax()
+                    best_name = st.session_state.portfolio[best_ticker]['Nome']
                     
-                    fig.update_layout(template="plotly_white", hovermode="x unified")
+                    r1, r2, r3 = st.columns(3)
+                    r1.metric("Rendimento PAC (1A)", f"{ret_1y:+.2f}%")
+                    r2.metric("Rendimento PAC (6M)", f"{ret_6m:+.2f}%")
+                    r3.metric("Miglior Asset in Portafoglio", f"{best_name[:25]}...", f"{perf_etf.max():+.2f}%")
+
+                    # Grafico con Nomi in Legenda
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC (Complessivo)", line=dict(color='#FF3B30', width=4)))
+                    
+                    for t in tickers_list:
+                        etf_display_name = st.session_state.portfolio[t]['Nome']
+                        # Accorcia nomi troppo lunghi per la legenda
+                        if len(etf_display_name) > 30: etf_display_name = etf_display_name[:30] + "..."
+                        
+                        fig.add_trace(go.Scatter(
+                            x=norm.index, y=norm[t], 
+                            name=etf_display_name, 
+                            line=dict(width=1.2), 
+                            opacity=0.4
+                        ))
+                    
+                    fig.update_layout(template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                     st.plotly_chart(fig, use_container_width=True)
-            except: st.error("Errore caricamento dati.")
+                else:
+                    st.error("Dati non trovati.")
+            except Exception as e:
+                st.error(f"Errore: {e}")
 
     # Torta
-    df_plot = pd.DataFrame([{'ETF': k, 'Peso': v['Peso']} for k,v in st.session_state.portfolio.items() if v['Peso']>0])
+    df_plot = pd.DataFrame([{'ETF': v['Nome'], 'Peso': v['Peso']} for v in st.session_state.portfolio.values() if v['Peso']>0])
     if not df_plot.empty:
-        st.plotly_chart(px.pie(df_plot, values='Peso', names='ETF', hole=0.4, title="Distribuzione Budget"), use_container_width=True)
+        st.plotly_chart(px.pie(df_plot, values='Peso', names='ETF', hole=0.4, title="Ripartizione Budget"), use_container_width=True)
 else:
-    st.info("👈 Carica un file o aggiungi un ETF per iniziare.")
+    st.info("👈 Inizia aggiungendo un ETF.")
