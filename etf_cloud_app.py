@@ -22,7 +22,6 @@ if 'total_budget' not in st.session_state:
 
 # --- CALLBACK PER AGGIORNAMENTO ISTANTANEO PESI ---
 def sync_weight(ticker):
-    # Questa funzione viene eseguita IMMEDIATAMENTE quando cambi il valore nel box
     st.session_state.portfolio[ticker]['Peso'] = st.session_state[f"input_w_{ticker}"]
 
 # --- FUNZIONI ---
@@ -63,6 +62,7 @@ st.markdown("""
         border-radius: 4px; font-size: 0.65rem; font-weight: 700;
     }
     .budget-box { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #1a73e8; margin-bottom: 20px; }
+    .perf-box { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #e0e0e0; text-align: center; }
     .weight-warning { color: #d32f2f; font-weight: bold; }
     .weight-ok { color: #2e7d32; font-weight: bold; }
     </style>
@@ -96,8 +96,6 @@ if c_side1.button("💾 SALVA", use_container_width=True):
 if c_side2.button("🔄 AGGIORNA", use_container_width=True):
     update_all_prices(); st.rerun()
 
-# TASTO RESET
-st.sidebar.markdown("---")
 if st.sidebar.button("🧹 RESET DATI REALI", use_container_width=True):
     for t in st.session_state.portfolio:
         st.session_state.portfolio[t]['Investito_Reale'] = 0.0
@@ -110,14 +108,12 @@ st.title("💰 ETF PAC Planner Pro")
 if not st.session_state.portfolio:
     st.info("Aggiungi un ETF dalla barra laterale per iniziare.")
 else:
-    # Calcolo Somma Pesi dinamica
+    # Somma Pesi
     somma_pesi = sum(a['Peso'] for a in st.session_state.portfolio.values())
-    
-    # Avviso Pesi
     if somma_pesi != 100:
-        st.markdown(f"⚠️ <span class='weight-warning'>Somma pesi attuale: {somma_pesi}% (Deve essere 100%)</span>", unsafe_allow_html=True)
+        st.markdown(f"⚠️ <span class='weight-warning'>Somma pesi: {somma_pesi}% (Deve essere 100%)</span>", unsafe_allow_html=True)
     else:
-        st.markdown(f"✅ <span class='weight-ok'>Somma pesi corretta: {somma_pesi}%</span>", unsafe_allow_html=True)
+        st.markdown(f"✅ <span class='weight-ok'>Somma pesi: {somma_pesi}%</span>", unsafe_allow_html=True)
 
     # Tabella
     h = st.columns([2.2, 0.6, 0.7, 0.7, 0.9, 0.9, 0.7, 1.2])
@@ -127,31 +123,21 @@ else:
     
     for ticker, asset in list(st.session_state.portfolio.items()):
         p_eur = asset['Prezzo'] * asset['Cambio']
-        
         c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2.2, 0.6, 0.7, 0.7, 0.9, 0.9, 0.7, 1.2])
         with c2: st.markdown(f"<span class='tipo-tag {'acc-tag' if asset['Politica']=='Acc' else 'dist-tag'}'>{asset['Politica']}</span>", unsafe_allow_html=True)
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:35]}</div><div class='ticker-label'>{ticker}</div>", unsafe_allow_html=True)
             v_attuale = asset['Quote_Reali'] * p_eur
             if v_attuale > 0: st.markdown(f"<div class='real-status'>Valore: {v_attuale:,.2f}€</div>", unsafe_allow_html=True)
-            
             isin_to_use = asset.get('ISIN', '')
             just_etf_url = f"https://www.justetf.com/it/etf-profile.html?isin={isin_to_use}" if len(str(isin_to_use)) > 5 else f"https://www.justetf.com/it/find-etf.html?query={ticker.split('.')[0]}"
             st.markdown(f"<a href='{just_etf_url}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
 
         c3.write(f"{p_eur:,.2f}")
+        c4.number_input("%", 0, 100, int(asset['Peso']), key=f"input_w_{ticker}", on_change=sync_weight, args=(ticker,), label_visibility="collapsed")
         
-        # AGGIORNAMENTO PESO CON CALLBACK (Risolve il problema del ritardo)
-        c4.number_input("%", 0, 100, int(asset['Peso']), 
-                        key=f"input_w_{ticker}", 
-                        on_change=sync_weight, 
-                        args=(ticker,), 
-                        label_visibility="collapsed")
-        
-        # Calcoli Budget basati sul valore già sincronizzato dal callback
         target_eur = (asset['Peso'] / 100) * st.session_state.total_budget
         target_settim = target_eur / 4.33
-        
         c5.write(f"**{target_eur:,.2f}**")
         c6.write(f"{target_settim:,.2f}")
         
@@ -188,34 +174,65 @@ else:
     with c_info:
         st.subheader("🏦 Stato dell'Investimento")
         st.markdown("<div class='budget-box'>", unsafe_allow_html=True)
-        st.write(f"**Capitale Totale Versato:** {tot_investito_reale:,.2f} €")
         st.write(f"**Budget Mensile PAC:** {st.session_state.total_budget:,.2f} €")
         rapporto = tot_investito_reale / st.session_state.total_budget if st.session_state.total_budget > 0 else 0
-        st.write(f"**Copertura Piano:** Hai accumulato **{rapporto:.1f} mensilità**.")
+        st.write(f"**Copertura Piano:** {rapporto:.1f} mensilità.")
         st.progress(min(rapporto / 24, 1.0))
         st.markdown("</div>", unsafe_allow_html=True)
-
     with c_pie:
         if total_val_portafoglio > 0:
             df_pie = pd.DataFrame([{'Asset': a['Nome'], 'Valore': a['Quote_Reali'] * a['Prezzo']} for a in st.session_state.portfolio.values() if a['Quote_Reali'] > 0])
             fig_p = px.pie(df_pie, values='Valore', names='Asset', hole=0.4, title="Distribuzione Reale (€)")
             st.plotly_chart(fig_p, use_container_width=True)
 
-    # --- GRAFICO STORICO ---
-    st.subheader("📈 Performance Storica (1 Anno)")
+    # --- SEZIONE PERFORMANCE STORICA E METRICHE RICHIESTE ---
+    st.markdown("---")
+    st.subheader("📊 Metriche Performance PAC")
+    
     try:
         tks = list(st.session_state.portfolio.keys())
         data = yf.download(tks, period="1y", progress=False)['Close']
         if len(tks) == 1: data = data.to_frame(); data.columns = tks
-        norm = (data.ffill() / data.ffill().iloc[0]) * 100
+        
+        # Pulizia dati
+        data = data.ffill().dropna()
+        norm = (data / data.iloc[0]) * 100
+        
+        # Calcolo Rendimenti singoli
+        returns_1y = ((data.iloc[-1] / data.iloc[0]) - 1) * 100
+        # Rendimento 6 mesi (metà del dataframe approssimativamente)
+        idx_6m = len(data) // 2
+        returns_6m = ((data.iloc[-1] / data.iloc[idx_6m]) - 1) * 100
+        
+        # Rendimento PAC pesato
+        pesi_list = [st.session_state.portfolio[t]['Peso'] for t in tks]
+        somma_p = sum(pesi_list) if sum(pesi_list) > 0 else 1
+        
+        pac_perf_1y = sum(returns_1y[t] * (st.session_state.portfolio[t]['Peso'] / somma_p) for t in tks)
+        pac_perf_6m = sum(returns_6m[t] * (st.session_state.portfolio[t]['Peso'] / somma_p) for t in tks)
+        
+        # Miglior Asset
+        best_ticker = returns_1y.idxmax()
+        best_asset_name = st.session_state.portfolio[best_ticker]['Nome']
+        best_asset_perf = returns_1y.max()
+
+        # Visualizzazione Metriche
+        perf_c1, perf_c2, perf_c3 = st.columns(3)
+        perf_c1.metric("Rendimento PAC (1 Anno)", f"{pac_perf_1y:+.2f}%")
+        perf_c2.metric("Rendimento PAC (6 Mesi)", f"{pac_perf_6m:+.2f}%")
+        perf_c3.metric("Miglior Asset (1 Anno)", f"{best_asset_name[:20]}...", f"{best_asset_perf:+.2f}%")
+
+        # Grafico Storico
+        st.subheader("📈 Performance Storica (1 Anno)")
         fig = go.Figure()
-        pesi_g = [st.session_state.portfolio[t]['Peso'] for t in tks]
-        if sum(pesi_g) > 0:
-            fig.add_trace(go.Scatter(x=norm.index, y=(norm * pesi_g).sum(axis=1)/sum(pesi_g), name="⭐ IL TUO PAC", line=dict(color='red', width=4)))
+        if somma_p > 0:
+            fig.add_trace(go.Scatter(x=norm.index, y=(norm * pesi_list).sum(axis=1)/somma_p, name="⭐ IL TUO PAC", line=dict(color='red', width=4)))
         for t in tks:
             fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=1.5), opacity=0.6))
         fig.update_layout(template="plotly_white", height=400, margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", y=-0.2))
         st.plotly_chart(fig, use_container_width=True)
-    except: st.warning("Grafico storico non disponibile")
+        
+    except Exception as e:
+        st.warning(f"Dati storici non sufficienti per calcolare le performance: {e}")
 
 st.sidebar.caption(f"Ultimo agg: {time.strftime('%H:%M:%S', time.localtime(st.session_state.last_update))}")
