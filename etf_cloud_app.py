@@ -20,10 +20,6 @@ if 'last_update' not in st.session_state:
 if 'total_budget' not in st.session_state:
     st.session_state.total_budget = 1000.0
 
-# --- CALLBACK PER AGGIORNAMENTO ISTANTANEO PESI ---
-def sync_weight(ticker):
-    st.session_state.portfolio[ticker]['Peso'] = st.session_state[f"input_w_{ticker}"]
-
 # --- FUNZIONI DI SUPPORTO ---
 def detect_policy(inf, nome):
     y_val = inf.get('dividendYield') or inf.get('trailingAnnualDividendYield') or 0
@@ -41,50 +37,28 @@ def update_all_prices():
         except: continue
     st.session_state.last_update = time.time()
 
+# Funzione per aggiornare il peso nel dizionario principale appena il widget cambia
+def on_weight_change(ticker):
+    new_val = st.session_state[f"input_w_{ticker}"]
+    st.session_state.portfolio[ticker]['Peso'] = float(new_val)
+
 # --- AUTO UPDATE PREZZI ---
 if (time.time() - st.session_state.last_update) > UPDATE_INTERVAL:
     update_all_prices()
 
-# --- CSS PERSONALIZZATO (Incluso controllo Font Metriche) ---
+# --- CSS PERSONALIZZATO (Metriche Font Size) ---
 st.markdown("""
     <style>
-    /* Stile generale metriche */
-    .stMetric { 
-        background-color: #ffffff; 
-        padding: 15px; 
-        border-radius: 10px; 
-        border: 1px solid #e0e0e0; 
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    
-    /* MODIFICA SIZE FONT METRICHE */
-    [data-testid="stMetricLabel"] {
-        font-size: 1.0rem !important;
-        font-weight: 600 !important;
-        color: #5f6368 !important;
-    }
-    [data-testid="stMetricValue"] {
-        font-size: 1.8rem !important;
-        font-weight: 800 !important;
-        color: #1a1c1e !important;
-    }
-    [data-testid="stMetricDelta"] {
-        font-size: 0.9rem !important;
-    }
-
-    /* Stile Tabella e Asset */
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #e0e0e0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    [data-testid="stMetricLabel"] { font-size: 1.0rem !important; font-weight: 600 !important; color: #5f6368 !important; }
+    [data-testid="stMetricValue"] { font-size: 1.8rem !important; font-weight: 800 !important; color: #1a1c1e !important; }
+    [data-testid="stMetricDelta"] { font-size: 0.9rem !important; }
     .etf-name { color: #1a1c1e; font-weight: 700; font-size: 0.95rem; line-height: 1.1; }
     .ticker-label { color: #666; font-family: monospace; font-size: 0.8rem; }
     .tipo-tag { padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; color: white; }
-    .acc-tag { background-color: #1a73e8; }
-    .dist-tag { background-color: #f29900; }
+    .acc-tag { background-color: #1a73e8; } .dist-tag { background-color: #f29900; }
     .real-status { color: #2e7d32; font-size: 0.75rem; font-weight: 600; margin-top: 3px; }
-    .just-link-btn { 
-        display: inline-block; margin-top: 5px; padding: 2px 10px; 
-        background-color: #ffffff; color: #1a73e8 !important; 
-        text-decoration: none !important; border: 1px solid #1a73e8;
-        border-radius: 4px; font-size: 0.65rem; font-weight: 700;
-    }
+    .just-link-btn { display: inline-block; margin-top: 5px; padding: 2px 10px; background-color: #ffffff; color: #1a73e8 !important; text-decoration: none !important; border: 1px solid #1a73e8; border-radius: 4px; font-size: 0.65rem; font-weight: 700; }
     .budget-box { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #1a73e8; margin-bottom: 20px; }
     .weight-warning { color: #d32f2f; font-weight: bold; }
     .weight-ok { color: #2e7d32; font-weight: bold; }
@@ -116,7 +90,6 @@ col_s1, col_s2 = st.sidebar.columns(2)
 if col_s1.button("💾 SALVA", use_container_width=True):
     pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()]).to_csv(DB_FILE, index=False)
     st.sidebar.success("Salvato!")
-
 if col_s2.button("🔄 AGGIORNA", use_container_width=True):
     update_all_prices(); st.rerun()
 
@@ -144,12 +117,12 @@ with st.sidebar.expander("➕ Aggiungi ETF"):
 st.title("💰 ETF PAC Planner Pro")
 
 if not st.session_state.portfolio:
-    st.info("👋 Benvenuto! Carica un file o aggiungi un ETF per iniziare.")
+    st.info("👋 Carica un file o aggiungi un ETF per iniziare.")
 else:
-    # Somma Pesi
+    # Calcolo Somma Pesi
     somma_pesi = sum(a['Peso'] for a in st.session_state.portfolio.values())
     if somma_pesi != 100:
-        st.markdown(f"⚠️ <span class='weight-warning'>Somma pesi attuale: {somma_pesi}% (Deve essere 100%)</span>", unsafe_allow_html=True)
+        st.markdown(f"⚠️ <span class='weight-warning'>Somma pesi: {somma_pesi}% (Deve essere 100%)</span>", unsafe_allow_html=True)
     else:
         st.markdown(f"✅ <span class='weight-ok'>Somma pesi corretta: {somma_pesi}%</span>", unsafe_allow_html=True)
 
@@ -162,22 +135,30 @@ else:
     for ticker, asset in list(st.session_state.portfolio.items()):
         p_eur = asset['Prezzo']
         c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2.2, 0.6, 0.7, 0.7, 0.9, 0.9, 0.7, 1.2])
+        
         with c2: st.markdown(f"<span class='tipo-tag {'acc-tag' if asset['Politica']=='Acc' else 'dist-tag'}'>{asset['Politica']}</span>", unsafe_allow_html=True)
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:35]}</div><div class='ticker-label'>{ticker}</div>", unsafe_allow_html=True)
             v_att = asset['Quote_Reali'] * p_eur
             if v_att > 0: st.markdown(f"<div class='real-status'>Valore: {v_att:,.2f}€</div>", unsafe_allow_html=True)
             isin_to_use = asset.get('ISIN', '')
-            just_etf_url = f"https://www.justetf.com/it/etf-profile.html?isin={isin_to_use}" if len(str(isin_to_use)) > 5 else f"https://www.justetf.com/it/find-etf.html?query={ticker.split('.')[0]}"
-            st.markdown(f"<a href='{just_etf_url}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
+            just_url = f"https://www.justetf.com/it/etf-profile.html?isin={isin_to_use}" if len(str(isin_to_use)) > 5 else f"https://www.justetf.com/it/find-etf.html?query={ticker.split('.')[0]}"
+            st.markdown(f"<a href='{just_url}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
 
         c3.write(f"{p_eur:,.2f}")
-        c4.number_input("%", 0, 100, int(asset['Peso']), key=f"input_w_{ticker}", on_change=sync_weight, args=(ticker,), label_visibility="collapsed")
         
-        target_eur = (asset['Peso'] / 100) * st.session_state.total_budget
-        target_sett = target_eur / 4.33
-        c5.write(f"**{target_eur:,.2f}**")
-        c6.write(f"{target_sett:,.2f}")
+        # LOGICA PESO CORRETTA: key basata sullo stato e callback on_change
+        c4.number_input("%", 0, 100, value=int(asset['Peso']), 
+                        key=f"input_w_{ticker}", 
+                        on_change=on_weight_change, 
+                        args=(ticker,), 
+                        label_visibility="collapsed")
+        
+        # Calcoli Budget (usano il peso aggiornato)
+        t_eur = (asset['Peso'] / 100) * st.session_state.total_budget
+        t_sett = t_eur / 4.33
+        c5.write(f"**{t_eur:,.2f}**")
+        c6.write(f"{t_sett:,.2f}")
         
         with c7:
             if total_val_portafoglio > 0:
@@ -188,13 +169,13 @@ else:
         with c8:
             act1, act2, act3 = st.columns(3)
             if act1.button("➕", key=f"add_{ticker}"):
-                asset['Investito_Reale'] += target_eur
-                asset['Quote_Reali'] += (target_eur / p_eur) if p_eur > 0 else 0
+                asset['Investito_Reale'] += t_sett # Aggiunge una quota settimanale
+                asset['Quote_Reali'] += (t_sett / p_eur) if p_eur > 0 else 0
                 st.rerun()
             if act2.button("➖", key=f"sub_{ticker}"):
-                if asset['Investito_Reale'] >= target_eur:
-                    asset['Investito_Reale'] -= target_eur
-                    asset['Quote_Reali'] = max(0.0, asset['Quote_Reali'] - (target_eur / p_eur))
+                if asset['Investito_Reale'] >= t_sett:
+                    asset['Investito_Reale'] -= t_sett
+                    asset['Quote_Reali'] = max(0.0, asset['Quote_Reali'] - (t_sett / p_eur))
                     st.rerun()
             if act3.button("🗑️", key=f"del_{ticker}"):
                 del st.session_state.portfolio[ticker]; st.rerun()
@@ -207,51 +188,48 @@ else:
     m2.metric("Valore Attuale", f"{total_val_portafoglio:,.2f} €")
     m3.metric("Profit/Loss", f"{total_val_portafoglio - tot_inv_reale:,.2f} €", f"{((total_val_portafoglio/tot_inv_reale)-1)*100 if tot_inv_reale>0 else 0:+.2f}%")
 
-    # --- ANALISI STATO E TORTA ---
     st.markdown("---")
     c_info, c_pie = st.columns([1, 1.5])
     with c_info:
-        st.subheader("🏦 Stato dell'Investimento")
+        st.subheader("🏦 Riepilogo Piano")
         st.markdown("<div class='budget-box'>", unsafe_allow_html=True)
         st.write(f"**Budget Mensile PAC:** {st.session_state.total_budget:,.2f} €")
         rapp = tot_inv_reale / st.session_state.total_budget if st.session_state.total_budget > 0 else 0
-        st.write(f"**Copertura Piano:** {rapp:.1f} mensilità.")
+        st.write(f"**Copertura:** {rapp:.1f} mensilità accumulate.")
         st.progress(min(rapp / 24, 1.0))
         st.markdown("</div>", unsafe_allow_html=True)
     with c_pie:
         if total_val_portafoglio > 0:
             df_pie = pd.DataFrame([{'Asset': a['Nome'], 'Valore': a['Quote_Reali'] * a['Prezzo']} for a in st.session_state.portfolio.values() if a['Quote_Reali'] > 0])
-            st.plotly_chart(px.pie(df_pie, values='Valore', names='Asset', hole=0.4, title="Distribuzione Reale (€)"), use_container_width=True)
+            st.plotly_chart(px.pie(df_pie, values='Valore', names='Asset', hole=0.4, title="Distribuzione (€)"), use_container_width=True)
 
-    # --- PERFORMANCE (SOLO ASSET CON PESO > 0) ---
+    # --- PERFORMANCE (SOLO PESO > 0) ---
     active_tks = [t for t in st.session_state.portfolio.keys() if st.session_state.portfolio[t]['Peso'] > 0]
     if active_tks:
         st.markdown("---")
-        st.subheader("📊 Metriche Performance PAC (Asset Attivi > 0%)")
+        st.subheader("📊 Metriche Performance PAC (Asset con Peso > 0%)")
         try:
             data = yf.download(active_tks, period="1y", progress=False)['Close']
             if len(active_tks) == 1: data = data.to_frame(); data.columns = active_tks
             data = data.ffill().dropna()
             norm = (data / data.iloc[0]) * 100
-            
             ret1y = ((data.iloc[-1] / data.iloc[0]) - 1) * 100
             ret6m = ((data.iloc[-1] / data.iloc[len(data)//2]) - 1) * 100
             
-            pesi_att = [st.session_state.portfolio[t]['Peso'] for t in active_tks]
-            s_p = sum(pesi_att)
-            p_perf1y = sum(ret1y[t] * (st.session_state.portfolio[t]['Peso'] / s_p) for t in active_tks)
-            p_perf6m = sum(ret6m[t] * (st.session_state.portfolio[t]['Peso'] / s_p) for t in active_tks)
-            
+            p_att = [st.session_state.portfolio[t]['Peso'] for t in active_tks]
+            s_p = sum(p_att)
+            p_1y = sum(ret1y[t] * (st.session_state.portfolio[t]['Peso'] / s_p) for t in active_tks)
+            p_6m = sum(ret6m[t] * (st.session_state.portfolio[t]['Peso'] / s_p) for t in active_tks)
             best_t = ret1y.idxmax()
-            
+
             pc1, pc2, pc3 = st.columns(3)
-            pc1.metric("Rendimento PAC (1 Anno)", f"{p_perf1y:+.2f}%")
-            pc2.metric("Rendimento PAC (6 Mesi)", f"{p_perf6m:+.2f}%")
+            pc1.metric("Rendimento PAC (1 Anno)", f"{p_1y:+.2f}%")
+            pc2.metric("Rendimento PAC (6 Mesi)", f"{p_6m:+.2f}%")
             pc3.metric("Miglior Asset (1 Anno)", f"{st.session_state.portfolio[best_t]['Nome'][:20]}...", f"{ret1y.max():+.2f}%")
 
             st.subheader("📈 Performance Storica (Asset Attivi)")
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=norm.index, y=(norm * pesi_att).sum(axis=1)/s_p, name="⭐ IL TUO PAC", line=dict(color='red', width=4), zorder=10))
+            fig.add_trace(go.Scatter(x=norm.index, y=(norm * p_att).sum(axis=1)/s_p, name="⭐ IL TUO PAC", line=dict(color='red', width=4), zorder=10))
             for t in active_tks:
                 fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:20], line=dict(width=1.5), opacity=0.6))
             fig.update_layout(template="plotly_white", height=400, margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", y=-0.2))
