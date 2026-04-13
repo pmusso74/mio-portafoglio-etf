@@ -125,7 +125,17 @@ else:
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:35]}</div><div class='ticker-label'>{ticker}</div>", unsafe_allow_html=True)
             if v_attuale > 0: st.markdown(f"<div class='real-status'>Valore: {v_attuale:,.2f}€</div>", unsafe_allow_html=True)
-            if asset.get('ISIN'): st.markdown(f"<a href='https://www.justetf.com/it/etf-profile.html?isin={asset['ISIN']}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
+            
+            # --- FIX LOGICA JUSTETF ---
+            isin_to_use = asset.get('ISIN', '')
+            # Se l'ISIN è mancante o non è nel formato corretto, usa il ticker per la ricerca
+            if not isin_to_use or len(str(isin_to_use)) < 10 or isin_to_use == "-":
+                clean_ticker = ticker.split('.')[0] # Rimuove .MI o .DE
+                just_etf_url = f"https://www.justetf.com/it/find-etf.html?query={clean_ticker}"
+            else:
+                just_etf_url = f"https://www.justetf.com/it/etf-profile.html?isin={isin_to_use}"
+            
+            st.markdown(f"<a href='{just_etf_url}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
 
         c3.write(f"{p_eur:,.2f}")
         asset['Peso'] = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed", help="Percentuale del budget mensile da destinare a questo ETF")
