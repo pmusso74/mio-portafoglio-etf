@@ -34,8 +34,11 @@ st.markdown("""
     }
     .just-link-btn:hover { background-color: #1a73e8; color: white !important; }
     
-    .small-metric-label { font-size: 0.85rem; color: #5f6368; margin-bottom: 2px; }
-    .small-metric-value { font-size: 1.5rem; font-weight: 700; color: #1a1c1e; }
+    /* Font Rendimenti */
+    .small-metric-label { font-size: 0.9rem; color: #5f6368; margin-bottom: 2px; font-weight: 500; }
+    .small-metric-value { font-size: 1.25rem; font-weight: 800; color: #1a1c1e; }
+    .best-asset-value { font-size: 1.15rem; font-weight: 800; color: #1a73e8; }
+    .best-asset-pct { font-size: 1.1rem; font-weight: 700; color: #2e7d32; }
 
     .euro-value { color: #2e7d32; font-weight: 700; font-size: 1.1rem; }
     .pos-ret { color: #2e7d32; font-weight: 700; }
@@ -54,7 +57,6 @@ def get_exchange_rate(ticker_currency):
     except: return 1.0
 
 def load_from_df(df):
-    """Mappa un dataframe caricato allo stato della sessione"""
     df = df.fillna("")
     new_port = {}
     for _, row in df.iterrows():
@@ -92,13 +94,11 @@ if 'total_budget' not in st.session_state:
 # --- SIDEBAR ---
 st.sidebar.title("📁 Gestione Portafoglio")
 
-# 1. TASTO SALVA
 if st.sidebar.button("💾 SALVA PORTAFOGLIO"):
     if save_data_locally(): st.sidebar.success("Salvato!")
 
 st.sidebar.markdown("---")
 
-# 2. TASTO UPLOAD (RIPRISTINATO)
 uploaded_file = st.sidebar.file_uploader("📥 Carica CSV esterno", type="csv")
 if uploaded_file is not None:
     try:
@@ -110,11 +110,8 @@ if uploaded_file is not None:
         st.sidebar.error(f"Errore: {e}")
 
 st.sidebar.markdown("---")
-
-# 3. BUDGET
 st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", min_value=0.0, value=float(st.session_state.total_budget), step=50.0)
 
-# 4. BOX RICERCA ISIN
 st.sidebar.markdown("<div class='search-container'>", unsafe_allow_html=True)
 st.sidebar.subheader("🔍 Aggiungi ETF")
 target_isin = st.sidebar.text_input("Inserisci Codice ISIN", placeholder="es: IE00B4L5Y983").strip().upper()
@@ -146,8 +143,8 @@ st.title("💰 Il mio Piano d'Accumulo")
 
 if st.session_state.portfolio:
     cols = st.columns([3.8, 1.2, 1.0, 1.0, 1.5, 1.5, 0.5])
-    for col, lab in zip(cols, ["Asset / Documentazione", "Dati Tecnici", "Prezzo €", "Peso %", "Investimento", "Quote", ""]):
-        col.write(f"**{lab}**")
+    header_labels = ["Asset / Documentazione", "Dati Tecnici", "Prezzo €", "Peso %", "Investimento", "Quote", ""]
+    for col, lab in zip(cols, header_labels): col.write(f"**{lab}**")
 
     tot_w = 0
     active_tickers = []
@@ -180,7 +177,7 @@ if st.session_state.portfolio:
     # --- PERFORMANCE ---
     st.subheader("📈 Analisi Performance")
     if st.button("🚀 GENERA ANALISI STORICA"):
-        with st.spinner("Analisi..."):
+        with st.spinner("Analisi in corso..."):
             try:
                 data = yf.download(active_tickers, period="1y")['Close']
                 if len(active_tickers) == 1: data = data.to_frame(); data.columns = active_tickers
@@ -192,43 +189,50 @@ if st.session_state.portfolio:
                     for t in active_tickers:
                         port_line += norm[t] * (st.session_state.portfolio[t]['Peso'] / 100)
                     
-                    # Metriche Rendimento
                     ret_1y = port_line.iloc[-1] - 100
                     ret_6m = ((port_line.iloc[-1] / port_line.iloc[-len(port_line)//2]) - 1) * 100
                     perf_etf = ((data.iloc[-1] / data.iloc[0]) - 1) * 100
                     best_t = perf_etf.idxmax()
 
+                    # METRICHE (Font aumentato per Miglior Asset)
                     m1, m2, m3 = st.columns(3)
                     with m1:
                         st.markdown(f"<div class='small-metric-label'>Rendimento PAC (1 Anno)</div><div class='small-metric-value'>{ret_1y:+.2f}%</div>", unsafe_allow_html=True)
                     with m2:
                         st.markdown(f"<div class='small-metric-label'>Rendimento PAC (6 Mesi)</div><div class='small-metric-value'>{ret_6m:+.2f}%</div>", unsafe_allow_html=True)
                     with m3:
-                        st.markdown(f"<div class='small-metric-label'>Miglior Asset (1A)</div><div class='small-metric-value' style='font-size:0.9rem;'>{st.session_state.portfolio[best_t]['Nome'][:30]}...</div><div class='pos-ret' style='font-size:0.85rem;'>{perf_etf.max():+.2f}%</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='small-metric-label'>🏆 Miglior Asset (1 Anno)</div><div class='best-asset-value'>{st.session_state.portfolio[best_t]['Nome'][:40]}</div><div class='best-asset-pct'>{perf_etf.max():+.2f}%</div>", unsafe_allow_html=True)
 
-                    # Grafico (ROSSO)
+                    # Grafico (ROSSO e Linee marcate)
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC", line=dict(color='#FF3B30', width=4)))
+                    # Linea PAC
+                    fig.add_trace(go.Scatter(x=port_line.index, y=port_line, name="IL TUO PAC", line=dict(color='#FF3B30', width=5)))
+                    
+                    # Linee ETF (Più marcate)
                     for t in active_tickers:
-                        fig.add_trace(go.Scatter(x=norm.index, y=norm[t], name=st.session_state.portfolio[t]['Nome'][:25], line=dict(width=1), opacity=0.3))
-                    fig.update_layout(template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.1))
+                        fig.add_trace(go.Scatter(x=norm.index, y=norm[t], 
+                                                 name=st.session_state.portfolio[t]['Nome'][:25], 
+                                                 line=dict(width=2), 
+                                                 opacity=0.8)) # Aumentata opacità per visibilità
+                    
+                    fig.update_layout(template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.15))
                     st.plotly_chart(fig, use_container_width=True)
 
-                    # Rendimenti riga per riga
+                    # Dettaglio Rendimenti
                     st.markdown("### 📋 Dettaglio Rendimenti Asset")
                     for t in active_tickers:
                         r_1y = ((data[t].iloc[-1] / data[t].iloc[0]) - 1) * 100
                         r_6m = ((data[t].iloc[-1] / data[t].iloc[-len(data)//2]) - 1) * 100
                         ca, cb, cc, cd = st.columns([3, 1, 1, 2])
-                        ca.write(st.session_state.portfolio[t]['Nome'])
+                        ca.write(f"**{st.session_state.portfolio[t]['Nome']}**")
                         cb.markdown(f"<span class='{'pos-ret' if r_1y>=0 else 'neg-ret'}'>1A: {r_1y:+.2f}%</span>", unsafe_allow_html=True)
                         cc.markdown(f"<span class='{'pos-ret' if r_6m>=0 else 'neg-ret'}'>6M: {r_6m:+.2f}%</span>", unsafe_allow_html=True)
                         cd.write(f"{data[t].iloc[0]:.2f}€ → {data[t].iloc[-1]:.2f}€")
-            except: st.error("Errore dati.")
+            except: st.error("Errore analisi dati.")
 
-    # Torta
+    # Grafico a torta
     df_plot = pd.DataFrame([{'ETF': v['Nome'], 'Peso': v['Peso']} for v in st.session_state.portfolio.values() if v['Peso'] > 0])
     if not df_plot.empty:
         st.plotly_chart(px.pie(df_plot, values='Peso', names='ETF', hole=0.4, title="Ripartizione"), use_container_width=True)
 else:
-    st.info("👈 Inserisci un ISIN nella barra laterale o carica un file CSV per iniziare.")
+    st.info("👈 Inserisci un ISIN o carica un CSV per iniziare.")
