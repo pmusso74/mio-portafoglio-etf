@@ -10,7 +10,7 @@ from datetime import datetime
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="ETF PAC Planner Pro", layout="wide", page_icon="💰")
 DB_FILE = "pac_data.csv"
-UPDATE_INTERVAL = 60  # Aggiornamento ogni 60 secondi
+UPDATE_INTERVAL = 60 
 
 # --- INIZIALIZZAZIONE STATO ---
 if 'portfolio' not in st.session_state:
@@ -51,12 +51,11 @@ def load_from_dataframe(df):
             }
         st.session_state.portfolio = new_port
         st.session_state.total_budget = float(df['Total_Budget'].iloc[0])
-        st.success("Portafoglio caricato con successo!")
+        st.success("✅ Portafoglio caricato!")
     except:
-        st.error("Errore nel formato del file CSV.")
+        st.error("❌ Formato CSV non valido.")
 
-# --- LOGICA AUTO-REFRESH (SENZA SFARFALLIO CONTINUO) ---
-# L'app fa il rerun solo quando scatta il minuto, non ogni secondo
+# --- LOGICA AUTO-REFRESH ---
 if (time.time() - st.session_state.last_update) > UPDATE_INTERVAL:
     update_all_prices()
     st.rerun()
@@ -71,22 +70,42 @@ st.markdown("""
     .acc-tag { background-color: #1a73e8; }
     .dist-tag { background-color: #f29900; }
     .real-status { color: #2e7d32; font-size: 0.75rem; font-weight: 600; margin-top: 3px; }
-    .timer-info { font-size: 0.8rem; color: #d32f2f; font-weight: bold; background: #fff5f5; padding: 8px; border-radius: 5px; border: 1px solid #feb2b2; text-align: center; }
-    .budget-box { background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #1a73e8; }
+    .just-link-btn { 
+        display: inline-block; margin-top: 5px; padding: 2px 10px; 
+        background-color: #ffffff; color: #1a73e8 !important; 
+        text-decoration: none !important; border: 1px solid #1a73e8;
+        border-radius: 4px; font-size: 0.65rem; font-weight: 700;
+    }
+    .timer-info { font-size: 0.75rem; color: #d32f2f; font-weight: bold; background: #fff5f5; padding: 10px; border-radius: 5px; border: 1px solid #feb2b2; text-align: center; margin-top: 10px; }
+    .budget-box { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #1a73e8; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- SIDEBAR ---
-st.sidebar.header("📁 Portafoglio")
+st.sidebar.header("📁 Gestione Portafoglio")
 
-# Caricamento CSV
-uploaded_file = st.sidebar.file_uploader("📥 Carica file PAC (.csv)", type="csv", help="Carica un file salvato precedentemente per ripristinare i dati.")
+# Sezione Caricamento
+uploaded_file = st.sidebar.file_uploader("📥 Carica Backup CSV", type="csv")
 if uploaded_file:
     load_from_dataframe(pd.read_csv(uploaded_file))
 
-with st.sidebar.expander("➕ Aggiungi Nuovo ETF"):
-    new_t = st.text_input("Ticker Yahoo (es. SWDA.MI)").strip().upper()
-    if st.button("Aggiungi all'elenco", use_container_width=True):
+st.sidebar.markdown("---")
+st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", value=float(st.session_state.total_budget), step=50.0)
+
+# Tasti Azione Allineati
+col_btn1, col_btn2 = st.sidebar.columns(2)
+if col_btn1.button("💾 SALVA", use_container_width=True, help="Salva quote e pesi nel file locale"):
+    pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()]).to_csv(DB_FILE, index=False)
+    st.sidebar.success("Salvato!")
+
+if col_btn2.button("🔄 AGGIORNA", use_container_width=True, help="Aggiorna i prezzi di mercato"):
+    update_all_prices()
+    st.rerun()
+
+# Sezione Aggiunta ETF
+with st.sidebar.expander("➕ Aggiungi nuovo ETF"):
+    new_t = st.text_input("Ticker Yahoo").strip().upper()
+    if st.button("Aggiungi Asset", use_container_width=True):
         try:
             y = yf.Ticker(new_t); i = y.info; n = i.get('shortName', new_t)
             st.session_state.portfolio[new_t] = {
@@ -99,31 +118,16 @@ with st.sidebar.expander("➕ Aggiungi Nuovo ETF"):
             st.rerun()
         except: st.error("Ticker non trovato.")
 
-st.sidebar.markdown("---")
-st.session_state.total_budget = st.sidebar.number_input("Budget Mensile (€)", value=float(st.session_state.total_budget), step=50.0, help="Cifra che investi ogni mese.")
-
-col_s1, col_s2 = st.sidebar.columns(2)
-if col_s1.button("💾 SALVA", use_container_width=True, help="Salva permanentemente i pesi e le quote reali."):
-    pd.DataFrame([{'Ticker': k, 'Total_Budget': st.session_state.total_budget, **v} for k, v in st.session_state.portfolio.items()]).to_csv(DB_FILE, index=False)
-    st.sidebar.success("Salvato!")
-if col_s2.button("🔄 AGGIORNA", use_container_width=True, help="Forza l'aggiornamento immediato dei prezzi."):
-    update_all_prices(); st.rerun()
-
-# Timer Visibile (statico, si aggiorna solo al refresh)
-last_str = datetime.fromtimestamp(st.session_state.last_update).strftime('%H:%M:%S')
-next_str = datetime.fromtimestamp(st.session_state.last_update + UPDATE_INTERVAL).strftime('%H:%M:%S')
-st.sidebar.markdown(f"""
-<div class='timer-info'>
-    ⏱ Ultimo aggiornamento: {last_str}<br>
-    🔄 Prossimo aggiornamento: {next_str}
-</div>
-""", unsafe_allow_html=True)
+# Timer statico
+last_s = datetime.fromtimestamp(st.session_state.last_update).strftime('%H:%M:%S')
+next_s = datetime.fromtimestamp(st.session_state.last_update + UPDATE_INTERVAL).strftime('%H:%M:%S')
+st.sidebar.markdown(f"<div class='timer-info'>⏱ Ultimo: {last_s} | Prossimo: {next_s}</div>", unsafe_allow_html=True)
 
 # --- MAIN INTERFACE ---
 st.title("💰 ETF PAC Planner Pro")
 
 if not st.session_state.portfolio:
-    st.info("Benvenuto! Carica un file CSV o aggiungi un ETF dal menu a sinistra.")
+    st.info("👋 Inizia caricando un file CSV o aggiungendo un ETF dal menu a sinistra.")
 else:
     # Tabella
     h = st.columns([2.5, 0.6, 0.8, 0.8, 1, 1, 1.2])
@@ -141,9 +145,10 @@ else:
         with c1:
             st.markdown(f"<div class='etf-name'>{asset['Nome'][:35]}</div><div class='ticker-label'>{ticker}</div>", unsafe_allow_html=True)
             if v_attuale > 0: st.markdown(f"<div class='real-status'>Posseduto: {v_attuale:,.2f}€</div>", unsafe_allow_html=True)
+            if asset.get('ISIN'): st.markdown(f"<a href='https://www.justetf.com/it/etf-profile.html?isin={asset['ISIN']}' target='_blank' class='just-link-btn'>JustETF ↗</a>", unsafe_allow_html=True)
 
         c3.write(f"{p_eur:,.2f}")
-        asset['Peso'] = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed", help="Peso percentuale nel portafoglio.")
+        asset['Peso'] = c4.number_input("%", 0, 100, int(asset['Peso']), key=f"w_{ticker}", label_visibility="collapsed")
         c5.write(f"**{target_eur:,.2f} €**")
         with c6:
             if total_val_portafoglio > 0:
@@ -153,24 +158,24 @@ else:
 
         with c7:
             a1, a2, a3 = st.columns(3)
-            if a1.button("➕", key=f"add_{ticker}", help="REGISTRA ACQUISTO: Aggiunge la quota target al posseduto reale."):
+            if a1.button("➕", key=f"add_{ticker}", help="Aggiungi una mensilità pianificata"):
                 asset['Investito_Reale'] += target_eur
                 asset['Quote_Reali'] += (target_eur / p_eur) if p_eur > 0 else 0
                 st.rerun()
-            if a2.button("➖", key=f"sub_{ticker}", help="STORNA: Sottrae una quota target (utile per correggere errori)."):
+            if a2.button("➖", key=f"sub_{ticker}", help="Annulla/Sottrae una mensilità (anche se già salvata)"):
                 if asset['Investito_Reale'] >= target_eur:
                     asset['Investito_Reale'] -= target_eur
                     asset['Quote_Reali'] = max(0, asset['Quote_Reali'] - (target_eur / p_eur))
                     st.rerun()
-            if a3.button("🗑️", key=f"del_{ticker}", help="ELIMINA: Rimuove l'asset dal piano."):
+            if a3.button("🗑️", key=f"del_{ticker}", help="Rimuovi asset dal piano"):
                 del st.session_state.portfolio[ticker]; st.rerun()
 
     # --- METRICHE ---
     st.markdown("---")
     tot_investito_reale = sum(a['Investito_Reale'] for a in st.session_state.portfolio.values())
     m1, m2, m3 = st.columns(3)
-    m1.metric("Capitale Versato", f"{tot_investito_reale:,.2f} €", help="Totale euro spesi per gli acquisti.")
-    m2.metric("Valore Attuale", f"{total_val_portafoglio:,.2f} €", help="Valore di mercato odierno.")
+    m1.metric("Capitale Versato", f"{tot_investito_reale:,.2f} €")
+    m2.metric("Valore Portafoglio", f"{total_val_portafoglio:,.2f} €")
     m3.metric("Profit/Loss", f"{total_val_portafoglio - tot_investito_reale:,.2f} €", f"{((total_val_portafoglio/tot_investito_reale)-1)*100 if tot_investito_reale>0 else 0:+.2f}%")
 
     # --- GRAFICO STORICO ---
@@ -192,9 +197,9 @@ else:
 
     # --- ALLOCAZIONE E BUDGET ---
     st.markdown("---")
+    st.subheader("📊 Analisi Portafoglio Reale")
     c_pie, c_info = st.columns([1.5, 1])
     with c_pie:
-        st.subheader("📊 Distribuzione Reale (€)")
         if total_val_portafoglio > 0:
             df_pie = pd.DataFrame([{'Asset': a['Nome'], 'Valore': a['Quote_Reali'] * a['Prezzo'] * a['Cambio']} for a in st.session_state.portfolio.values() if a['Quote_Reali'] > 0])
             fig_p = px.pie(df_pie, values='Valore', names='Asset', hole=0.4)
@@ -203,11 +208,11 @@ else:
             st.plotly_chart(fig_p, use_container_width=True)
 
     with c_info:
-        st.subheader("🏦 Riepilogo Piano")
         st.markdown("<div class='budget-box'>", unsafe_allow_html=True)
+        st.write("### 🏦 Riepilogo Piano")
         st.write(f"**Investimento Totale:** {tot_investito_reale:,.2f} €")
         st.write(f"**Budget Mensile PAC:** {st.session_state.total_budget:,.2f} €")
-        mensilita = tot_investito_reale / st.session_state.total_budget if st.session_state.total_budget > 0 else 0
-        st.write(f"**Copertura:** Hai investito circa **{mensilita:.1f} mensilità**.")
-        st.progress(min(mensilita / 24, 1.0), text="Progresso (Target 2 anni)")
+        mens = tot_investito_reale / st.session_state.total_budget if st.session_state.total_budget > 0 else 0
+        st.write(f"**Copertura:** Hai accumulato **{mens:.1f} mensilità**.")
+        st.progress(min(mens / 24, 1.0), text="Progresso (Target 2 anni)")
         st.markdown("</div>", unsafe_allow_html=True)
